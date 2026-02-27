@@ -10,3 +10,4 @@ logout.dat
 /sim/tests/htsim_*
 
 *.txt
+.vscode/
