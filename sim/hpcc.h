@@ -115,7 +115,7 @@ public:
     static uint32_t _Wai;//Additive increase amount.
 
 private:
-    IntEntry _link_info[5];
+    IntEntry _link_info[NHOPS];
     uint32_t _link_count;
     HPCCPacket::seq_t _last_update_seq;
     HPCCPacket::seq_t _cwnd, _flightsize, _Wc;

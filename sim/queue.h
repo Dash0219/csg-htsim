@@ -66,6 +66,7 @@ class BaseQueue  : public EventSource, public PacketSink, public Drawable {
 
     static simtime_picosec _update_period;
 
+    void add_int_to_packet(Packet& pkt);
 protected:
     // Housekeeping
     PacketSink* _next_sink; // used in generic topology for linkage

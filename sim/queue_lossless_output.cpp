@@ -124,7 +124,7 @@ void LosslessOutputQueue::completeService(){
     if (pkt->type()==HPCC){
         //HPPC INT information adding to packet
         HPCCPacket* h = dynamic_cast<HPCCPacket*>(pkt);
-        assert(h->_int_hop<5);
+        assert(h->_int_hop<NHOPS);
 
         h->_int_info[h->_int_hop]._queuesize = _queuesize;
         h->_int_info[h->_int_hop]._ts = eventlist().now();
@@ -136,6 +136,10 @@ void LosslessOutputQueue::completeService(){
 
         h->_int_info[h->_int_hop]._txbytes = _txbytes;
         h->_int_info[h->_int_hop]._linkrate = _bitrate;
+
+
+        // Dash: extend the INT data here
+        h->_int_info[h->_int_hop]._packetid = pkt->id();
 
         h->_int_hop++;
     }   

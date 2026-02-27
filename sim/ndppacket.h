@@ -21,6 +21,11 @@ class NdpPacket : public Packet {
 public:
     typedef uint64_t seq_t;
 
+    // using INT_hops = std::vector<INT_hop>;
+    // std::shared_ptr<INT_hops> _int_data;
+
+    // NdpPacket() : _int_data(std::make_shared<INT_hops>()) {}
+
     // pseudo-constructor for a routeless packet - routing information
     // must be filled in later
     inline static NdpPacket* newpkt(PacketFlow &flow, 
@@ -43,6 +48,7 @@ public:
         p->set_dst(destination);
         p->_trim_hop = UINT32_MAX;
         p->_trim_direction = NONE;
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
   
@@ -66,6 +72,7 @@ public:
         p->_trim_hop = UINT32_MAX;
         p->_trim_direction = NONE;
         p->set_dst(destination);
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
   
@@ -142,6 +149,7 @@ public:
         p->_direction = NONE;
         p->_ecn_echo = false;
         p->set_dst(destination);
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
   
@@ -199,6 +207,7 @@ public:
         p->_path_len = 0;
         p->_ecn_echo = false;
         p->set_dst(destination);
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
   
@@ -246,6 +255,7 @@ public:
         p->_path_id = 0;
         p->_direction = NONE;    
         p->set_dst(destination);
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
 
@@ -261,7 +271,7 @@ public:
         p->_path_id = 0;
         p->_direction = NONE;    
         p->set_dst(destination);
-
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
     
@@ -303,6 +313,7 @@ public:
         p->_path_len = 0;
         p->_direction = NONE;
         p->set_dst(ack->dst());
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
   
@@ -322,6 +333,7 @@ public:
         p->_path_len = 0;
         p->_direction = NONE;
         p->set_dst(nack->dst());
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
 
@@ -340,6 +352,7 @@ public:
         p->_path_len = 0;
         p->_direction = NONE;
         p->set_dst(rts->dst());
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }
 
@@ -361,6 +374,7 @@ public:
         p->_path_len = 0;
         p->set_dst(destination);
         p->_direction = NONE;
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }    
 
@@ -379,6 +393,7 @@ public:
         p->_path_len = 0;
         p->set_dst(destination);
         p->_direction = NONE;
+        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
         return p;
     }    
 

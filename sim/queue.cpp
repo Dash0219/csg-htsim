@@ -114,6 +114,30 @@ BaseQueue::quantized_queuesize(){
     return _last_qs;
 }
 
+void
+BaseQueue::add_int_to_packet(Packet& pkt) {
+    // auto* np = dynamic_cast<NdpPacket*>(&pkt);
+    // if (np && np->_int_enabled && np->route()) {
+    //     pkt.route()->add_int_hop(
+    //         static_cast<uint32_t>(std::hash<std::string>{}(nodename())),
+    //         eventlist().now(),
+    //         static_cast<uint32_t>(queuesize())
+    //     );
+    // }
+
+    auto& flow = pkt.flow();
+    if (!flow._int_enabled)
+        return;
+
+    flow._int_trace.push_back({
+        &pkt,
+        pkt.id(),
+        static_cast<uint32_t>(std::hash<std::string>{}(nodename())),
+        eventlist().now(),
+        static_cast<uint32_t>(queuesize())
+    });
+}
+
 
 Queue::Queue(linkspeed_bps bitrate, mem_b maxsize, EventList& eventlist, 
              QueueLogger* logger)
@@ -169,6 +193,10 @@ Queue::doNextEvent()
 void
 Queue::receivePacket(Packet& pkt) 
 {
+    // std::cout << "[DBG] " << nodename() << " receivePacket called (type=" << typeid(*this).name() << ")\n";
+    // Dash: add INT to packet
+    add_int_to_packet(pkt);
+
     if (_queuesize+pkt.size() > _maxsize) {
         /* if the packet doesn't fit in the queue, drop it */
         if (_logger) 
@@ -256,6 +284,10 @@ PriorityQueue::serviceTime(Packet& pkt) {
 void
 PriorityQueue::receivePacket(Packet& pkt) 
 {
+    // std::cout << "[DBG] " << nodename() << " receivePacket called (type=" << typeid(*this).name() << ")\n";
+    // Dash: add INT to packet
+    add_int_to_packet(pkt);
+
     //is this a PAUSE packet?
     if (pkt.type()==ETH_PAUSE){
         EthPausePacket* p = (EthPausePacket*)&pkt;
@@ -428,6 +460,10 @@ FairPriorityQueue::serviceTime(Packet& pkt) {
 void
 FairPriorityQueue::receivePacket(Packet& pkt) 
 {
+    // std::cout << "[DBG] " << nodename() << " receivePacket called (type=" << typeid(*this).name() << ")\n";
+    // Dash: add INT to packet
+    add_int_to_packet(pkt);
+
     //is this a PAUSE packet?
     if (pkt.type()==ETH_PAUSE){
         EthPausePacket* p = (EthPausePacket*)&pkt;

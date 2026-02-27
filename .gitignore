@@ -8,3 +8,5 @@
 logout.dat
 /sim/datacenter/htsim_*
 /sim/tests/htsim_*
+
+*.txt

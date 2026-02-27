@@ -10,7 +10,21 @@
 #include <list>
 #include <vector>
 
+#include <memory>
+#include <unordered_map>
+#include <cstdint>
+#include <algorithm> // for std::find
+
+struct RouteINT_hop {
+    uint32_t hop_id;
+    simtime_picosec timestamp;   // simtime_picosec is an integer type; store as uint64_t to avoid header cycles
+    uint32_t queue_len;
+};
+
+typedef uint32_t packetid_t;
+
 class PacketSink;
+class Packet;
 class Route {
   public:
     Route();
@@ -34,7 +48,6 @@ class Route {
     void add_endpoints(PacketSink *src, PacketSink* dst);
     inline size_t size() const {return _sinklist.size();}
     typedef vector<PacketSink*>::const_iterator const_iterator;
-    //typedef vector<PacketSink*>::iterator iterator;
     inline const_iterator begin() const {return _sinklist.begin();}
     inline const_iterator end() const {return _sinklist.end();}
     void set_reverse(Route* reverse) {_reverse = reverse;}
@@ -46,13 +59,24 @@ class Route {
     inline int path_id() const {return _path_id;}
     inline int no_of_paths() const {return _no_of_paths;}
     inline uint32_t hop_count() const {return _hop_count;}
- private:
-    void update_hopcount(PacketSink* sink);
+
     vector<PacketSink*> _sinklist;
+
+    // void add_int_hop(uint32_t hop,
+    //                  simtime_picosec ts,
+    //                  uint32_t qlen) const;
+
+    // const std::vector<RouteINT_hop>& get_int_trace() const;
+    // void clear_int_trace() const;
+
+  private:
+    void update_hopcount(PacketSink* sink);
     uint32_t _hop_count;
     Route* _reverse;
     int _path_id; //path identifier for this path
     int _no_of_paths; //total number of paths sender is using
+
+    // mutable std::vector<RouteINT_hop> _int_trace;
 };
 //typedef vector<PacketSink*> route_t;
 typedef Route route_t;

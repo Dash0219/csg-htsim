@@ -532,12 +532,16 @@ void NdpSrc::processNack(const NdpNack& nack){
     case SINGLE_PATH:
         p = NdpPacket::newpkt(_flow, *_route, seqno, 0, _mss, true,
                               _paths.size()>0?_paths.size():1, last_packet,_dstaddr);
+        // Dash: enable INT
+        p->enable_int();
         break;
     case ECMP_FIB:
     case ECMP_FIB_ECN:
         p = NdpPacket::newpkt(_flow, *_route, seqno, 0, _mss, true,
                     _path_ids.size(), last_packet,_dstaddr);
         p->set_pathid(_path_ids[choose_route()]);
+        // Dash: enable INT
+        p->enable_int();
         break;
     case SCATTER_PERMUTE:
     case SCATTER_RANDOM:
@@ -546,6 +550,8 @@ void NdpSrc::processNack(const NdpNack& nack){
         const Route *rt = _paths.at(choose_route());
         p = NdpPacket::newpkt(_flow, *rt, seqno, 0, _mss, true,
                     _paths.size()>0?_paths.size():1, last_packet,_dstaddr);
+        // Dash: enable INT
+        p->enable_int();
         break;
     }
     case REACTIVE_ECN: {
@@ -553,6 +559,8 @@ void NdpSrc::processNack(const NdpNack& nack){
         p = NdpPacket::newpkt(_flow, *_route, seqno, 0, _mss, true,
                     _path_ids.size(), last_packet,_dstaddr);
         p->set_pathid(_path_ids[next_route()]);
+        // Dash: enable INT
+        p->enable_int();
         break;
     }        
     case NOT_SET:
@@ -952,6 +960,8 @@ int NdpSrc::send_packet(NdpPull::seq_t pacer_no) {
             const Route *rt = _paths.at(choose_route());
             p = NdpPacket::newpkt(_flow, *rt, _highest_sent+1, pacer_no, _mss, false,
                                   _paths.size()>0?_paths.size():1, last_packet,_dstaddr);
+           // Dash: enable INT
+            p->enable_int();     
             
 #ifdef DEBUG_PATH_STATS
             _path_counts_new[p->path_id()]++;
@@ -965,23 +975,29 @@ int NdpSrc::send_packet(NdpPull::seq_t pacer_no) {
                 p = NdpPacket::newpkt(_flow, *_route, _highest_sent+1, pacer_no,
                                       _mss, false, _path_ids.size(),
                                       last_packet,_dstaddr);
+                // Dash: enable INT
+                p->enable_int();
                 int crt = choose_route();
                 p->set_pathid(_path_ids[crt]);
-                /*
+                // /*
+                _log_me = true;
                 if (_log_me) {
                     cout << eventlist().now() << " sending " << _path_ids[crt] << endl;
                 }
-                */
+                // */
                 break;
             }
         case SINGLE_PATH:
             p = NdpPacket::newpkt(_flow, *_route, _highest_sent+1, pacer_no,
                                   _mss, false, 1,
                                   last_packet,_dstaddr);
+            // Dash: enable INT
+            p->enable_int();
             break;
         case NOT_SET:
             abort();
         }
+
         assert(p);
         p->flow().logTraffic(*p,*this,TrafficLogger::PKT_CREATESEND);
         p->set_ts(eventlist().now());
@@ -1081,6 +1097,7 @@ NdpSrc::retransmit_packet() {
     for (j = rtx_list.begin(); j != rtx_list.end(); j++) {
         NdpPacket::seq_t seqno = *j;
         bool last_packet = (seqno + _mss - 1) >= _flow_size;
+
         switch (_route_strategy) {
         case SCATTER_PERMUTE:
         case SCATTER_RANDOM:
@@ -1091,6 +1108,8 @@ NdpSrc::retransmit_packet() {
             const Route* rt = _paths.at(_crt_path);
             p = NdpPacket::newpkt(_flow, *rt, seqno, 0, _mss, true,
                                   _paths.size(), last_packet,_dstaddr);
+            // Dash: enable INT
+            p->enable_int();
             if (_route_strategy == SCATTER_RANDOM) {
                 _crt_path = random() % _paths.size();
             } else {
@@ -1108,15 +1127,20 @@ NdpSrc::retransmit_packet() {
             p = NdpPacket::newpkt(_flow, *_route, seqno, 0, _mss, true,
                                   _path_ids.size(), last_packet,_dstaddr);
                 p->set_pathid(_path_ids[choose_route()]);
+            // Dash: enable INT
+            p->enable_int();
             break;
 
         case SINGLE_PATH:
             p = NdpPacket::newpkt(_flow, *_route, seqno, 0, _mss, true,
                                   _paths.size(), last_packet,_dstaddr);
+            // Dash: enable INT
+            p->enable_int();
             break;
         case NOT_SET:
             abort();
         }
+
         assert(p);
         p->flow().logTraffic(*p,*this,TrafficLogger::PKT_CREATESEND);
         p->set_ts(eventlist().now());
@@ -1480,6 +1504,34 @@ void NdpSink::receivePacket(Packet& pkt) {
 
     update_path_history(*p);
 
+    // Dash: print INT trace
+    // if (p->_int_enabled) {
+    //     auto* np = dynamic_cast<NdpPacket*>(&pkt);
+    //     if (np && np->_int_enabled && np->route()) {
+    //         auto& trace = pkt.route()->get_int_trace();
+    //         std::cout << trace.size() << " hops recorded:\n";
+    //         for (auto& h : trace) {
+    //             std::cout << "  hop=" << h.hop_id
+    //                     << " ts=" << h.timestamp
+    //                     << " qlen=" << h.queue_len << "\n";
+    //         }
+    //     } 
+    // }
+
+    auto& flow = pkt.flow();
+    if (flow._int_enabled) {
+        std::cout << "flow id: " << flow.flow_id() << ", " ;
+        std::cout << flow._int_trace.size() << " hops recorded:\n";
+        for (auto& h : flow._int_trace) {
+            std::cout << " pkt_ptr=" << h.packet_ptr
+                    << "  pkt=" << h.packet_id
+                    << "  hop=" << h.hop_id
+                    << " ts=" << h.timestamp
+                    << " qlen=" << h.queue_len << "\n";
+        }
+        flow.clear_int();
+    }
+
     if (pkt.header_only()){
         //is this trim last hop or is it from previous switches?
 
@@ -1499,12 +1551,11 @@ void NdpSink::receivePacket(Packet& pkt) {
         }
 
         pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_RCVDESTROY);
-
             //cout << "Header seqno " << seqno << " highest " << _highest_seqno << " total " << _total_received << " flow " << this << " at " << timeAsMs(_pacer->eventlist().now()) << endl;
 #ifdef RECORD_PATH_LENS
             _trimmed_path_lens[pkt.path_len()]++;
 #endif
-            p->free();
+        p->free();
         return;
     }
 

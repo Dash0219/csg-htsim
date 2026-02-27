@@ -172,6 +172,12 @@ void HPCCSrc::processNack(const HPCCNack& nack){
 /* PHPCCss an ACK.  Mostly just housekeeping*/
 void HPCCSrc::processAck(const HPCCAck& ack) {
     HPCCAck::seq_t ackno = ack.ackno();
+    
+    // Dash: debugging Abort trap: 6 crash, don't know why that happened
+    cout << "ACK received: ackno=" << ackno 
+     << " last_acked=" << _last_acked 
+     << " flightsize=" << _flightsize << endl;
+
 
     if (ackno > _last_acked) { // a brand new ack    
         assert(ackno - _last_acked <= _flightsize);
@@ -498,6 +504,37 @@ void HPCCSink::receivePacket(Packet& pkt) {
     send_ack(ts,p->_int_info, p->_int_hop);
     // have we seen everything yet?
     pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_RCVDESTROY);
+
+    // Dash: magic number to only print one end switch
+    // const int last_hop_to_print = 42;
+    // Dash: magic number to only print switches in a range (inclusive)
+    const int last_hop_to_print_l = 0;
+    const int last_hop_to_print_r = 63;
+    int last_hop = p->_int_info[p->_int_hop - 1]._switchID;
+    // if (last_hop != last_hop_to_print) {
+    if (last_hop < last_hop_to_print_l || last_hop > last_hop_to_print_r) {
+        pkt.free();
+        return;
+    }
+
+    cerr << "Printing INT info for flow " << flow_id() 
+         << ", sink: " << this->get_id() 
+         << ", no. of hops: " << p->_int_hop
+         << endl;
+    
+    for (uint32_t i = 0; i < p->_int_hop; i++) {
+        const IntEntry& e = p->_int_info[i];
+        cerr << "hop " << i
+            << " switch=" << e._switchID
+            << " switchtype=" << e._type
+            << " qlen=" << e._queuesize
+            << " ts=" << e._ts
+            << " txbytes=" << e._txbytes
+            << " linkrate=" << e._linkrate
+            << " packetid=" << e._packetid
+            << endl;
+    }
+
     pkt.free();
 }
 

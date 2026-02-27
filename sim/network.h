@@ -35,6 +35,24 @@ class PacketFlow : public Logged {
     void set_flowid(flowid_t id);
     inline flowid_t flow_id() const {return _flow_id;}
     bool log_me() const {return _logger != NULL;}
+
+    struct INT_hop {
+        Packet* packet_ptr;
+        packetid_t packet_id;
+        uint32_t hop_id;
+        simtime_picosec timestamp;
+        uint32_t queue_len;
+    };
+
+    std::vector<INT_hop> _int_trace;
+    bool _int_enabled = true;
+    void enable_int() { _int_enabled = true; }
+    void disable_int() { _int_enabled = false; }
+
+    void clear_int() { _int_trace.clear(); }
+
+    const std::vector<INT_hop>& get_int() const { return _int_trace; }
+
  protected:
     static packetid_t _max_flow_id;
     flowid_t _flow_id;
@@ -159,6 +177,25 @@ class Packet {
     //    void set_detour(PacketSink* n, int rewind) {_detour = n;_nexthop -= rewind;}
     
     string str() const;
+
+    // Dash: INT metadata
+    // struct INT_hop {
+    //     uint32_t hop_id;
+    //     simtime_picosec timestamp;
+    //     uint32_t queue_len;
+    // };
+
+    bool _int_enabled = false;  
+    // std::shared_ptr<std::vector<INT_hop>> _int_data;
+
+    void enable_int() { _int_enabled = true; }
+    void disable_int() { _int_enabled = false; }
+
+    // void add_int_hop(uint32_t hop_id, simtime_picosec ts, uint32_t ql) {
+    //     _int_data->push_back({hop_id, ts, ql});
+    // }
+
+    // const std::vector<INT_hop>& get_int_data() const { return *_int_data; }
  protected:
     void set_attrs(PacketFlow& flow, int pkt_size, packetid_t id);
 

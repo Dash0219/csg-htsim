@@ -13,6 +13,8 @@
 #define VALUE_NOT_SET -1
 //#define PULL_MAXPATHS 256 // maximum path ID that can be pulled
 
+#define NHOPS 8
+
 class IntEntry{
 public:
     IntEntry(){_switchID = UINT32_MAX;_type = UINT32_MAX; _queuesize = UINT32_MAX; _ts = 0; _txbytes = UINT64_MAX;}
@@ -23,6 +25,8 @@ public:
     simtime_picosec _ts;
     uint64_t _txbytes;
     linkspeed_bps _linkrate;
+    // Dash: extend INT data here
+    packetid_t _packetid;
 };
 
 class HPCCPacket : public Packet {
@@ -79,7 +83,8 @@ public:
     inline void set_ts(simtime_picosec ts) {_ts = ts;}
     inline uint32_t path_id() const {if (_pathid!=UINT32_MAX) return _pathid; else return _route->path_id();}
     virtual PktPriority priority() const {return Packet::PRIO_LO;}
-    IntEntry _int_info[5];
+    // Dash: this 5 limits the number of hops, i might change later
+    IntEntry _int_info[NHOPS];
     uint32_t _int_hop;
     const static int ACKSIZE=64;
 protected:
@@ -120,7 +125,7 @@ public:
   
     virtual ~HPCCAck(){}
 
-    IntEntry _int_info[5];
+    IntEntry _int_info[NHOPS];
     uint32_t _int_hop;
 protected:
     seq_t _ackno;

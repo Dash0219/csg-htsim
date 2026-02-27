@@ -11,10 +11,10 @@ Route::Route() : _hop_count(0), _reverse(NULL) {};
 
 Route::Route(int size) : _hop_count(0), _reverse(NULL) {
     _sinklist.reserve(size);
+    // _int_trace.reserve(size * sizeof(RouteINT_hop));
 };
 
-Route::Route(const Route& orig, PacketSink& dst) : _sinklist(orig.size()+1){
-    //_sinklist.resize(orig.size()+1);
+Route::Route(const Route& orig, PacketSink& dst) : _sinklist(orig.size()+1) {
     _path_id = orig.path_id();
     _reverse = orig._reverse;
     _hop_count = orig.hop_count();
@@ -24,6 +24,8 @@ Route::Route(const Route& orig, PacketSink& dst) : _sinklist(orig.size()+1){
     }
     _sinklist[orig.size()] = &dst;
     _hop_count++;
+
+    // _int_trace = orig._int_trace;
 }
 
 
@@ -31,44 +33,16 @@ Route*
 Route::clone() const {
     Route *copy = new Route(_hop_count);
     copy->set_path_id(_path_id, _no_of_paths);
-    /* don't clone the reverse path
-       if (_reverse) {
-       copy->_reverse = _reverse->clone();
-       }
-    */
     copy->_reverse = _reverse;
-    /*
-      vector<PacketSink*>::const_iterator i;
-      for (i = _sinklist.begin(); i != _sinklist.end(); i++) {
-      copy->push_back(*i);
-      }
-    */
+
     copy->_sinklist.resize(_sinklist.size());
     for (uint32_t i = 0; i < _sinklist.size(); i++) {
         copy->_sinklist[i] = _sinklist[i];
     }
+
+    // copy->_int_trace = _int_trace;
+
     return copy;
-}
-
-void
-Route::add_endpoints(PacketSink *src, PacketSink* dst) {
-    //_sinklist.push_back(dst);
-    if (_reverse) {
-        _reverse->push_back(src);
-    }
-}
-
-void
-Route::update_hopcount(PacketSink* sink) {
-    if (dynamic_cast<Pipe*>(sink) != NULL) {
-        //cout << sink->nodename() << " is a hop" << endl;
-        _hop_count++;
-    }
-    /*
-      else {
-      cout << sink->nodename() << " is not a hop" << endl;
-      }
-    */
 }
 
 
@@ -89,3 +63,31 @@ void check_non_null(Route* rt){
         assert(0);
     }
 }
+
+void
+Route::add_endpoints(PacketSink *src, PacketSink* dst) {
+    if (_reverse) {
+        _reverse->push_back(src);
+    }
+}
+
+void
+Route::update_hopcount(PacketSink* sink) {
+    if (dynamic_cast<Pipe*>(sink) != NULL) {
+        _hop_count++;
+    }
+}
+
+// void Route::add_int_hop(uint32_t hop,
+//                         simtime_picosec ts,
+//                         uint32_t qlen) const {
+//     _int_trace.push_back({hop, ts, qlen});
+// }
+
+// const std::vector<RouteINT_hop>& Route::get_int_trace() const {
+//     return _int_trace;
+// }
+
+// void Route::clear_int_trace() const {
+//     _int_trace.clear();
+// }
