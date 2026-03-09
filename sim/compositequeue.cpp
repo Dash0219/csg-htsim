@@ -3,7 +3,9 @@
 #include <math.h>
 #include <iostream>
 #include <sstream>
+#include <functional>
 #include "ecn.h"
+#include "ndppacket.h"
 
 CompositeQueue::CompositeQueue(linkspeed_bps bitrate, mem_b maxsize, EventList& eventlist, 
                                QueueLogger* logger)
@@ -115,6 +117,26 @@ CompositeQueue::completeService(){
     }
     
     pkt->flow().logTraffic(*pkt,*this,TrafficLogger::PKT_DEPART);
+
+    // Stamp INT on NDP data packets at dequeue time (accurate queue depth)
+    if (pkt->type() == NDP) {
+        NdpPacket* np = static_cast<NdpPacket*>(pkt);
+        if (!np->header_only() && np->_int_hop < NHOPS) {
+            uint32_t qs = static_cast<uint32_t>(queuesize());
+            uint32_t sw_id = _switch ? _switch->getID()
+                                     : static_cast<uint32_t>(std::hash<std::string>{}(nodename()));
+            uint32_t sw_type = _switch ? _switch->getType() : 0;
+            np->_int_info[np->_int_hop]._queuesize = qs;
+            np->_int_info[np->_int_hop]._ts        = eventlist().now();
+            np->_int_info[np->_int_hop]._txbytes   = 0;
+            np->_int_info[np->_int_hop]._linkrate  = _bitrate;
+            np->_int_info[np->_int_hop]._packetid  = pkt->id();
+            np->_int_info[np->_int_hop]._switchID  = sw_id;
+            np->_int_info[np->_int_hop]._type      = sw_type;
+            np->_int_hop++;
+        }
+    }
+
     pkt->sendOn();
 
     //_virtual_time += drainTime(pkt);

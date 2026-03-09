@@ -608,6 +608,15 @@ void NdpSrc::processAck(const NdpAck& ack) {
     _sent_times.erase(ackno);
 
     count_ack(path_id);
+    // Log INT feedback from the data packet path (echoed via ACK)
+    if (ack._int_hop > 0) {
+        for (uint32_t i = 0; i < ack._int_hop; i++) {
+            const IntEntry& e = ack._int_info[i];
+            // e._switchID, e._queuesize, e._ts, e._txbytes, e._linkrate
+            // are available here to drive routing/CC decisions
+            (void)e;
+        }
+    }
     if (ack.ecn_echo()) {
         count_ecn(path_id);
         if (_route_strategy == REACTIVE_ECN) {
@@ -1504,34 +1513,6 @@ void NdpSink::receivePacket(Packet& pkt) {
 
     update_path_history(*p);
 
-    // Dash: print INT trace
-    // if (p->_int_enabled) {
-    //     auto* np = dynamic_cast<NdpPacket*>(&pkt);
-    //     if (np && np->_int_enabled && np->route()) {
-    //         auto& trace = pkt.route()->get_int_trace();
-    //         std::cout << trace.size() << " hops recorded:\n";
-    //         for (auto& h : trace) {
-    //             std::cout << "  hop=" << h.hop_id
-    //                     << " ts=" << h.timestamp
-    //                     << " qlen=" << h.queue_len << "\n";
-    //         }
-    //     } 
-    // }
-
-    auto& flow = pkt.flow();
-    if (flow._int_enabled) {
-        std::cout << "flow id: " << flow.flow_id() << ", " ;
-        std::cout << flow._int_trace.size() << " hops recorded:\n";
-        for (auto& h : flow._int_trace) {
-            std::cout << " pkt_ptr=" << h.packet_ptr
-                    << "  pkt=" << h.packet_id
-                    << "  hop=" << h.hop_id
-                    << " ts=" << h.timestamp
-                    << " qlen=" << h.queue_len << "\n";
-        }
-        flow.clear_int();
-    }
-
     if (pkt.header_only()){
         //is this trim last hop or is it from previous switches?
 
@@ -1584,6 +1565,30 @@ void NdpSink::receivePacket(Packet& pkt) {
         _last_packet_seqno = p->seqno() + size - 1;
     }
 
+    // Buffer per-packet INT data before packet is freed (echoed back to source via ACK)
+    IntEntry int_info_buf[NHOPS];
+    uint32_t int_hop_buf = p->_int_hop;
+    for (uint32_t i = 0; i < int_hop_buf && i < NHOPS; i++)
+        int_info_buf[i] = p->_int_info[i];
+
+    // Print INT trace to stderr so it can be inspected separately from stdout logs
+    // if (int_hop_buf > 0) {
+    // if (int_hop_buf > 0 && p->dst() == 42) {
+    if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID == 42) {
+        std::cerr << "INT flow=" << pkt.flow().flow_id()
+                  << " seq=" << seqno
+                  << " hops=" << int_hop_buf << "\n";
+        for (uint32_t i = 0; i < int_hop_buf; i++) {
+            const IntEntry& e = int_info_buf[i];
+            std::cerr << "  [" << i << "] sw=" << e._switchID
+                      << " type=" << e._type
+                      << " qs=" << e._queuesize
+                      << " ts=" << e._ts
+                      << " txbytes=" << e._txbytes
+                      << " pktid=" << e._packetid << "\n";
+        }
+    }
+
     pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_RCVDESTROY);
     p->free();
   
@@ -1633,7 +1638,7 @@ void NdpSink::receivePacket(Packet& pkt) {
                 if (_ooo < _received.size())
                         _ooo = _received.size();
     }
-    send_ack(ts, seqno, pacer_no, marked, pull);
+    send_ack(ts, seqno, pacer_no, marked, pull, int_info_buf, int_hop_buf);
 
     //do additive increase if needed.
     if (NdpSink::_oversubscribed_congestion_control && _parked_cwnd > 0)
@@ -1707,7 +1712,8 @@ void NdpSink::update_path_history(const NdpPacket& p) {
 
 void NdpSink::send_ack(simtime_picosec ts, NdpPacket::seq_t ackno,
                        NdpPacket::seq_t pacer_no,
-                       bool ecn_marked,bool enqueue_pull) {
+                       bool ecn_marked, bool enqueue_pull,
+                       IntEntry* int_info, uint32_t int_hop) {
     NdpAck *ack = 0;
     //if (ecn_marked)
     //    cout << "ECN marked\n";
@@ -1768,6 +1774,12 @@ void NdpSink::send_ack(simtime_picosec ts, NdpPacket::seq_t ackno,
     ack->flow().logTraffic(*ack,*this,TrafficLogger::PKT_CREATE);
     ack->set_ts(ts);
 
+    // Echo INT telemetry from the data packet path back to the source
+    if (int_info && int_hop > 0) {
+        for (uint32_t i = 0; i < int_hop && i < NHOPS; i++)
+            ack->_int_info[i] = int_info[i];
+        ack->_int_hop = int_hop;
+    }
 
     if (enqueue_pull)
         _pacer->sendPacket(ack, pacer_no, this);

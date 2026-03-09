@@ -116,26 +116,36 @@ BaseQueue::quantized_queuesize(){
 
 void
 BaseQueue::add_int_to_packet(Packet& pkt) {
-    // auto* np = dynamic_cast<NdpPacket*>(&pkt);
-    // if (np && np->_int_enabled && np->route()) {
-    //     pkt.route()->add_int_hop(
-    //         static_cast<uint32_t>(std::hash<std::string>{}(nodename())),
-    //         eventlist().now(),
-    //         static_cast<uint32_t>(queuesize())
-    //     );
-    // }
-
     auto& flow = pkt.flow();
     if (!flow._int_enabled)
         return;
 
-    flow._int_trace.push_back({
-        &pkt,
-        pkt.id(),
-        static_cast<uint32_t>(std::hash<std::string>{}(nodename())),
-        eventlist().now(),
-        static_cast<uint32_t>(queuesize())
-    });
+    uint32_t hop_hash = static_cast<uint32_t>(std::hash<std::string>{}(nodename()));
+    simtime_picosec ts_now = eventlist().now();
+    uint32_t qs = static_cast<uint32_t>(queuesize());
+
+    flow._int_trace.push_back({&pkt, pkt.id(), hop_hash, ts_now, qs});
+
+    // Also stamp per-packet INT fields on NDP data packets
+    if (pkt.type() == NDP) {
+        NdpPacket* np = static_cast<NdpPacket*>(&pkt);
+        if (!np->header_only() && np->_int_hop < NHOPS) {
+            np->_int_info[np->_int_hop]._queuesize = qs;
+            np->_int_info[np->_int_hop]._ts        = ts_now;
+            np->_int_info[np->_int_hop]._txbytes   = 0;
+            np->_int_info[np->_int_hop]._linkrate  = _bitrate;
+            np->_int_info[np->_int_hop]._packetid  = pkt.id();
+            // Use switch pointer if available, otherwise fall back to nodename hash
+            if (_switch) {
+                np->_int_info[np->_int_hop]._switchID = _switch->getID();
+                np->_int_info[np->_int_hop]._type     = _switch->getType();
+            } else {
+                np->_int_info[np->_int_hop]._switchID = hop_hash;
+                np->_int_info[np->_int_hop]._type     = 0;
+            }
+            np->_int_hop++;
+        }
+    }
 }
 
 
@@ -167,6 +177,7 @@ Queue::completeService()
     //Packet* pkt = _enqueued.back();
     //_enqueued.pop_back();
     Packet* pkt = _enqueued.pop();
+
     _queuesize -= pkt->size();
     pkt->flow().logTraffic(*pkt, *this, TrafficLogger::PKT_DEPART);
     if (_logger) _logger->logQueue(*this, QueueLogger::PKT_SERVICE, *pkt);
@@ -193,10 +204,6 @@ Queue::doNextEvent()
 void
 Queue::receivePacket(Packet& pkt) 
 {
-    // std::cout << "[DBG] " << nodename() << " receivePacket called (type=" << typeid(*this).name() << ")\n";
-    // Dash: add INT to packet
-    add_int_to_packet(pkt);
-
     if (_queuesize+pkt.size() > _maxsize) {
         /* if the packet doesn't fit in the queue, drop it */
         if (_logger) 
@@ -284,10 +291,6 @@ PriorityQueue::serviceTime(Packet& pkt) {
 void
 PriorityQueue::receivePacket(Packet& pkt) 
 {
-    // std::cout << "[DBG] " << nodename() << " receivePacket called (type=" << typeid(*this).name() << ")\n";
-    // Dash: add INT to packet
-    add_int_to_packet(pkt);
-
     //is this a PAUSE packet?
     if (pkt.type()==ETH_PAUSE){
         EthPausePacket* p = (EthPausePacket*)&pkt;
@@ -371,6 +374,7 @@ PriorityQueue::completeService()
     else {
         Packet* pkt = _queue[_servicing].back();
         _queue[_servicing].pop_back();
+
         _queuesize[_servicing] -= pkt->size();
         pkt->flow().logTraffic(*pkt, *this, TrafficLogger::PKT_DEPART);
         if (_logger) _logger->logQueue(*this, QueueLogger::PKT_SERVICE, *pkt);
@@ -460,10 +464,6 @@ FairPriorityQueue::serviceTime(Packet& pkt) {
 void
 FairPriorityQueue::receivePacket(Packet& pkt) 
 {
-    // std::cout << "[DBG] " << nodename() << " receivePacket called (type=" << typeid(*this).name() << ")\n";
-    // Dash: add INT to packet
-    add_int_to_packet(pkt);
-
     //is this a PAUSE packet?
     if (pkt.type()==ETH_PAUSE){
         EthPausePacket* p = (EthPausePacket*)&pkt;
@@ -555,6 +555,7 @@ FairPriorityQueue::completeService()
     else {
         /* dequeue the packet */
         Packet* pkt = _sending;
+
         _queuesize[_servicing] -= pkt->size();
 
         _sending = NULL;

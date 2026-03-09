@@ -5,6 +5,7 @@
 #include <list>
 #include "network.h"
 #include "ecn.h"
+#include "hpccpacket.h"
 
 // NdpPacket and NdpAck are subclasses of Packet.
 // They incorporate a packet database, to reuse packet objects that are no longer needed.
@@ -20,11 +21,6 @@ class NdpPacket : public Packet {
  
 public:
     typedef uint64_t seq_t;
-
-    // using INT_hops = std::vector<INT_hop>;
-    // std::shared_ptr<INT_hops> _int_data;
-
-    // NdpPacket() : _int_data(std::make_shared<INT_hops>()) {}
 
     // pseudo-constructor for a routeless packet - routing information
     // must be filled in later
@@ -48,7 +44,7 @@ public:
         p->set_dst(destination);
         p->_trim_hop = UINT32_MAX;
         p->_trim_direction = NONE;
-        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
+        p->_int_hop = 0;
         return p;
     }
   
@@ -72,7 +68,7 @@ public:
         p->_trim_hop = UINT32_MAX;
         p->_trim_direction = NONE;
         p->set_dst(destination);
-        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
+        p->_int_hop = 0;
         return p;
     }
   
@@ -109,6 +105,9 @@ public:
             return Packet::PRIO_LO;
         }
     }
+    // INT telemetry: stamp at each hop, echoed back in NdpAck
+    IntEntry _int_info[NHOPS];
+    uint32_t _int_hop;
     const static int ACKSIZE=64; 
 protected:
     seq_t _seqno;
@@ -149,7 +148,7 @@ public:
         p->_direction = NONE;
         p->_ecn_echo = false;
         p->set_dst(destination);
-        // p->_int_data = std::make_shared<std::vector<INT_hop>>();
+        p->_int_hop = 0;
         return p;
     }
   
@@ -167,6 +166,9 @@ public:
     inline void set_ecn_echo(bool ecn_echo) {_ecn_echo = ecn_echo;}
     inline bool ecn_echo() const {return _ecn_echo;}
     virtual PktPriority priority() const {return Packet::PRIO_HI;}
+    // INT telemetry echoed from the data packet path
+    IntEntry _int_info[NHOPS];
+    uint32_t _int_hop;
   
     virtual ~NdpAck(){}
 

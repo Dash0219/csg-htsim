@@ -4,6 +4,7 @@
 #include <sstream>
 #include "switch.h"
 #include "hpccpacket.h"
+#include "ndppacket.h"
 #include "queue_lossless_output.h"
 #include "queue_lossless_input.h"
 
@@ -142,7 +143,22 @@ void LosslessOutputQueue::completeService(){
         h->_int_info[h->_int_hop]._packetid = pkt->id();
 
         h->_int_hop++;
-    }   
+    } else if (pkt->type() == NDP) {
+        // INT for NDP data packets (not headers/trims)
+        NdpPacket* np = dynamic_cast<NdpPacket*>(pkt);
+        if (np && !np->header_only() && np->_int_hop < NHOPS) {
+            np->_int_info[np->_int_hop]._queuesize = _queuesize;
+            np->_int_info[np->_int_hop]._ts        = eventlist().now();
+            if (_switch) {
+                np->_int_info[np->_int_hop]._switchID = _switch->getID();
+                np->_int_info[np->_int_hop]._type     = _switch->getType();
+            }
+            np->_int_info[np->_int_hop]._txbytes  = _txbytes;
+            np->_int_info[np->_int_hop]._linkrate  = _bitrate;
+            np->_int_info[np->_int_hop]._packetid  = pkt->id();
+            np->_int_hop++;
+        }
+    }
 
     _queuesize -= pkt->size();
     _txbytes += pkt->size();

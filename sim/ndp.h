@@ -321,7 +321,8 @@ class NdpSink : public PacketSink, public DataReceiver {
 
     // Mechanism
     void send_ack(simtime_picosec ts, NdpPacket::seq_t ackno, NdpPacket::seq_t pacer_no,
-                  bool ecn_marked, bool enqueue_pull);
+                  bool ecn_marked, bool enqueue_pull,
+                  IntEntry* int_info = nullptr, uint32_t int_hop = 0);
     void send_nack(simtime_picosec ts, NdpPacket::seq_t ackno, NdpPacket::seq_t pacer_no,
                    bool enqueue_pull, bool ecn_marked);
     void permute_paths();
