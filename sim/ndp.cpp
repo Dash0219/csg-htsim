@@ -5,6 +5,7 @@
 #include "ndp.h"
 #include "queue.h"
 #include <stdio.h>
+#include <inttypes.h>
 #include "switch.h"
 using namespace std;
 
@@ -1572,20 +1573,25 @@ void NdpSink::receivePacket(Packet& pkt) {
         int_info_buf[i] = p->_int_info[i];
 
     // Print INT trace to stderr so it can be inspected separately from stdout logs
+    // fprintf(stderr, "dst=%u\n", p->dst());
+    // if (int_hop_buf > 0) {                                                     // all flows (permutation TM)
+    if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID < 16) {  // 16 ToRs, ~128 concurrent
+    // if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID == 0) { // single ToR, ~8 concurrent
+    // if (int_hop_buf > 0 && p->dst() == 0) {                                      // single sink incast TM
     // if (int_hop_buf > 0) {
-    // if (int_hop_buf > 0 && p->dst() == 42) {
-    if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID == 42) {
-        std::cerr << "INT flow=" << pkt.flow().flow_id()
-                  << " seq=" << seqno
-                  << " hops=" << int_hop_buf << "\n";
+        // Make stderr fully buffered on first INT record to avoid per-write syscalls
+        static bool s_stderr_buffered = false;
+        if (!s_stderr_buffered) {
+            static char s_int_buf[1 << 22]; // 4 MB output buffer
+            setvbuf(stderr, s_int_buf, _IOFBF, sizeof(s_int_buf));
+            s_stderr_buffered = true;
+        }
+        fprintf(stderr, "INT flow=%u seq=%u hops=%u\n",
+                pkt.flow().flow_id(), seqno, int_hop_buf);
         for (uint32_t i = 0; i < int_hop_buf; i++) {
             const IntEntry& e = int_info_buf[i];
-            std::cerr << "  [" << i << "] sw=" << e._switchID
-                      << " type=" << e._type
-                      << " qs=" << e._queuesize
-                      << " ts=" << e._ts
-                      << " txbytes=" << e._txbytes
-                      << " pktid=" << e._packetid << "\n";
+            fprintf(stderr, "  [%u] sw=%u type=%u qs=%u ts=%" PRIu64 " txbytes=%" PRIu64 " pktid=%u\n",
+                    i, e._switchID, e._type, e._queuesize, e._ts, e._txbytes, e._packetid);
         }
     }
 

@@ -212,7 +212,7 @@ def print_events(events, limit=None):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('logfile', nargs='?', default='log2.txt')
+    ap.add_argument('--logfile', nargs='?', default='log2.txt')
     ap.add_argument('--events', action='store_true',
                     help='Print Strategy A change events')
     ap.add_argument('--limit', type=int, default=50,

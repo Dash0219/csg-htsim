@@ -11,3 +11,13 @@ logout.dat
 
 *.txt
 .vscode/
+
+# Generated experiment and analysis artifacts
+/experiments/*.cm
+/sim/datacenter/dash_plots/
+/sim/datacenter/dash_results/
+/sim/datacenter/dash_dataset/
+/sim/datacenter/dash_papers/
+/sim/datacenter/dash_report/
+
+**/__pycache__/
