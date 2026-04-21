@@ -16,9 +16,15 @@ if [[ ! -d "$SPLIT_DIR" ]]; then
 fi
 
 echo "== MAWI source-seen sweep =="
-python3 dash_scripts/cache_sim_source_seen_int.py "$SPLIT_DIR" \
-  --pattern '*.txt' --sweep --csv-per-split --csv "$CSV_OUT" \
-  > "$OUT_DIR/run_mawi_source_seen_top8.out" 2>&1
+if ! (
+  PYTHONUNBUFFERED=1 python3 dash_scripts/cache_sim_source_seen_int.py "$SPLIT_DIR" \
+    --pattern '*.txt' --sweep --fast --quiet-table --csv-per-split --csv "$CSV_OUT" \
+    2>&1 | tee "$OUT_DIR/run_mawi_source_seen_top8.out"
+); then
+  echo "ERROR: MAWI source-seen sweep failed. Last log lines:" >&2
+  tail -n 40 "$OUT_DIR/run_mawi_source_seen_top8.out" >&2 || true
+  exit 1
+fi
 
 echo "Wrote: $CSV_OUT"
 echo "Done. MAWI source-seen CSVs under: $OUT_DIR"

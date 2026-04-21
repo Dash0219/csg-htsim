@@ -27,10 +27,6 @@ def default_synthetic_logs(include_low_temp=False):
         "dash_dataset/synthetic/log_a2a_bimodal.txt",
         "dash_dataset/synthetic/log_incast_pareto.txt",
         "dash_dataset/synthetic/log_a2a_pareto.txt",
-        "dash_dataset/synthetic/log_incast_pareto_heavy.txt",
-        "dash_dataset/synthetic/log_a2a_pareto_heavy.txt",
-        "dash_dataset/synthetic/log_incast_lognormal_skewed.txt",
-        "dash_dataset/synthetic/log_a2a_lognormal_skewed.txt",
         "dash_dataset/synthetic/log_incast_exponential_skewed.txt",
         "dash_dataset/synthetic/log_a2a_exponential_skewed.txt",
     ]

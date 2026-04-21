@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Debug cache simulator for the first N INT packets.
-
 For each packet, this script:
 1) replays it through a selected cache policy,
 2) prints whether the packet was added, not added, or added but modified,
@@ -20,16 +19,18 @@ from cache_sim import (
     InfiniteLastPath,
     LRULastPath,
     LFULastPath,
-    VolatilityAwareLRU,
     AdmissionFilterLRU,
+    PendingAdmissionLRU,
+    PITCollapsedLRU,
     AdaptiveAdmissionLRU,
-    SegmentedLRU,
+    OnlineAdaptiveAdmissionLRU,
+    TinyCacheLRU,
+    TinyLFULRU,
     TimingBloomLRU,
-    TwoFilterOHWLRU,
     FIFOLastPath,
     LRULastPathTTL,
     FreshnessInvalidationLRU,
-    DualFreshnessLRU,
+    CacheINTFreshnessLRU,
 )
 
 
@@ -87,7 +88,7 @@ def get_main_store_view(cache):
         view = {}
         for flow, val in cache._store.items():
             if isinstance(val, set):
-                # InfiniteLastPath stores all seen paths per flow.
+                # Infinite stores all seen paths per flow.
                 view[flow] = f"seen_paths={len(val)}"
             else:
                 path = _path_from_entry(val)
@@ -145,21 +146,23 @@ def make_cache(args):
     ttl_ps = int(args.ttl_ms * 1_000_000_000)
     fresh_ttl_ps = int(args.fresh_ttl_ms * 1_000_000_000)
     dual_dyn_ttl_ps = int(args.dual_dyn_ttl_ms * 1_000_000_000)
-    dual_static_ttl_ps = int(args.dual_static_ttl_ms * 1_000_000_000)
+    pit_download_ps = int(args.pit_download_us * 1_000_000)
 
     cache_map = {
         "lru": lambda: LRULastPath(args.size),
         "lfu": lambda: LFULastPath(args.size),
-        "volatility": lambda: VolatilityAwareLRU(args.size),
         "admission": lambda: AdmissionFilterLRU(args.size, pending_reset_every=args.pending_reset_every),
+        "pending_admission": lambda: PendingAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
+        "pit": lambda: PITCollapsedLRU(args.size, download_delay_ps=pit_download_ps),
         "adaptive": lambda: AdaptiveAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
-        "slru": lambda: SegmentedLRU(args.size),
+        "online_adaptive": lambda: OnlineAdaptiveAdmissionLRU(args.size),
         "bloom": lambda: TimingBloomLRU(args.size, args.bloom_bits, args.bloom_hashes, args.bloom_epoch_records),
-        "ohw2": lambda: TwoFilterOHWLRU(args.size, args.bloom_bits, args.bloom_hashes, args.bloom_epoch_records),
         "fifo": lambda: FIFOLastPath(args.size),
+        "tiny_cache": lambda: TinyCacheLRU(args.size),
+        "tiny_lfu": lambda: TinyLFULRU(args.size),
         "lru_ttl": lambda: LRULastPathTTL(args.size, ttl_ps),
         "f_inv": lambda: FreshnessInvalidationLRU(args.size, fresh_ttl_ps),
-        "dual_fresh": lambda: DualFreshnessLRU(args.size, dual_dyn_ttl_ps, dual_static_ttl_ps, args.dual_stable_hits),
+        "cache_int": lambda: CacheINTFreshnessLRU(args.size, dual_dyn_ttl_ps, args.dual_stable_hits),
         "infinite_lp": lambda: InfiniteLastPath(),
     }
     return cache_map[args.cache]()
@@ -186,16 +189,18 @@ def parse_args():
         choices=[
             "lru",
             "lfu",
-            "volatility",
             "admission",
+            "pending_admission",
+            "pit",
             "adaptive",
-            "slru",
+            "online_adaptive",
             "bloom",
-            "ohw2",
             "fifo",
+            "tiny_cache",
+            "tiny_lfu",
             "lru_ttl",
             "f_inv",
-            "dual_fresh",
+            "cache_int",
             "infinite_lp",
         ],
         default="lru",
@@ -209,8 +214,8 @@ def parse_args():
     ap.add_argument("--ttl-ms", type=float, default=10.0)
     ap.add_argument("--fresh-ttl-ms", type=float, default=2.0)
     ap.add_argument("--dual-dyn-ttl-ms", type=float, default=0.5)
-    ap.add_argument("--dual-static-ttl-ms", type=float, default=10.0)
     ap.add_argument("--dual-stable-hits", type=int, default=3)
+    ap.add_argument("--pit-download-us", type=float, default=2.0)
     ap.add_argument("--out", default="debug_cache_sim.log", help="Output debug log file")
     return ap.parse_args()
 

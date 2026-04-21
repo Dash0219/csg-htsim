@@ -8,8 +8,8 @@ Usage:
 
 Options:
   -s, --split-dir DIR        Input split directory (default: dash_dataset/mawi/mawi_sinks_top8_prefix16)
-  -o, --out-dir DIR          Output directory (default: dash_results/mawi/flow_distribution/plots)
-      --prefix NAME          Output filename prefix (default: sink_flow_distribution_mawi_top8)
+  -o, --out-dir DIR          Output directory (default: dash_results/mawi/flow_size/plots)
+      --prefix NAME          Output filename prefix (default: sink_flow_size_mawi_top8)
       --cols N               Subplot grid columns (default: 4)
       --max-sinks N          Maximum sink files to include (0 means all)
       --sort-by MODE         rows | flows | name (default: rows)
@@ -18,8 +18,8 @@ EOF
 }
 
 SPLIT_DIR="${SPLIT_DIR:-dash_dataset/mawi/mawi_sinks_top8_prefix16}"
-OUT_DIR="${OUT_DIR:-dash_results/mawi/flow_distribution/plots}"
-PREFIX="${PREFIX:-sink_flow_distribution_mawi_top8}"
+OUT_DIR="${OUT_DIR:-dash_results/mawi/flow_size/plots}"
+PREFIX="${PREFIX:-sink_flow_size_mawi_top8}"
 COLS="${COLS:-4}"
 MAX_SINKS="${MAX_SINKS:-0}"
 SORT_BY="${SORT_BY:-rows}"
@@ -86,4 +86,4 @@ python3 dash_scripts/plot_sink_flow_distributions.py \
   --max-sinks "$MAX_SINKS" \
   --sort-by "$SORT_BY"
 
-echo "Done. MAWI flow distribution plots are under: $OUT_DIR"
+echo "Done. MAWI flow size plots are under: $OUT_DIR"

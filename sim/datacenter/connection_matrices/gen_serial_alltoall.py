@@ -12,7 +12,7 @@
 
 import os
 import sys
-from random import seed, shuffle, random, paretovariate, lognormvariate, expovariate
+from random import seed, shuffle, random, paretovariate, lognormvariate, expovariate, randint
 #print(sys.argv)
 
 
@@ -143,7 +143,8 @@ for group in range(groups):
             dst = (s+d)%groupsize
             out = str(groupsrcs[s]) + "->" + str(groupsrcs[dst]) + " id " + str(id)
             if d == 1:
-                out = out + " start " + str(int(extrastarttime * 1000000))
+                extra = randint(0, int(extrastarttime * 1000000))
+                out = out + " start " + str(extra)
             else:
                 out = out + " trigger " + str(trig_id)
                 trig_id += 1

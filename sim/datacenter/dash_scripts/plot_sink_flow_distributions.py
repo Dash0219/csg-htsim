@@ -43,12 +43,12 @@ def parse_args() -> argparse.Namespace:
         default="",
         help=(
             "Output directory for figures "
-            "(default: dash_results/imc/<dataset>/flow_distribution/plots inferred from --split-dir)."
+            "(default: dash_results/imc/<dataset>/flow_size/plots inferred from --split-dir)."
         ),
     )
     parser.add_argument(
         "--prefix",
-        default="sink_flow_distribution",
+        default="sink_flow_size",
         help="Output file prefix (default: %(default)s).",
     )
     parser.add_argument("--show", action="store_true", help="Show plots interactively.")
@@ -245,7 +245,7 @@ def plot_grid(
 def main() -> None:
     args = parse_args()
     split_dir = Path(args.split_dir)
-    out_dir = args.out_dir or f"dash_results/imc/{infer_imc_dataset(split_dir)}/flow_distribution/plots"
+    out_dir = args.out_dir or f"dash_results/imc/{infer_imc_dataset(split_dir)}/flow_size/plots"
     files = [Path(p) for p in glob(str(split_dir / args.pattern)) if Path(p).is_file()]
     files.sort(key=lambda p: p.name)
 

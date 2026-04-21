@@ -7,30 +7,30 @@ Usage:
   bash dash_scripts/run_plot_flow_distribution_synthetic.sh [options]
 
 Options:
-  -d, --dataset NAME        Only plot one synthetic dataset (e.g., a2a_pareto)
-  -l, --low-temp-locality   Only plot low-temp-locality synthetic datasets
-  -o, --out-dir DIR         Output directory (default: dash_results/synthetic/flow_distribution/plots)
-      --prefix NAME         Output filename prefix (default: flow_distribution)
+  -d, --dataset NAME        Only plot one synthetic dataset (repeatable)
+  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: ndp)
+  -o, --out-dir DIR         Output directory (default: dash_results/synthetic/<protocol>/flow_size/plots)
+      --prefix NAME         Output filename prefix root (default: flow_size)
   -h, --help                Show this help
 EOF
 }
 
-DATASET="${DATASET:-}"
-LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
-LOW_TEMP_SUFFIX="${LOW_TEMP_SUFFIX:-low_temp_locality}"
-OUT_DIR="${OUT_DIR:-dash_results/synthetic/flow_distribution/plots}"
-PREFIX="${PREFIX:-flow_distribution}"
+declare -a DATASETS=()
+PROTOCOL="${PROTOCOL:-ndp}"
+OUT_DIR="${OUT_DIR:-}"
+PREFIX="${PREFIX:-flow_size}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d|--dataset)
       [[ $# -ge 2 ]] || { echo "ERROR: --dataset requires a value" >&2; exit 1; }
-      DATASET="$2"
+      DATASETS+=("$2")
       shift 2
       ;;
-    -l|--low-temp-locality)
-      LOW_TEMP_LOCALITY=1
-      shift
+    -p|--protocol)
+      [[ $# -ge 2 ]] || { echo "ERROR: --protocol requires a value" >&2; exit 1; }
+      PROTOCOL="$2"
+      shift 2
       ;;
     -o|--out-dir)
       [[ $# -ge 2 ]] || { echo "ERROR: --out-dir requires a value" >&2; exit 1; }
@@ -54,42 +54,138 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$LOW_TEMP_LOCALITY" != "0" && "$LOW_TEMP_LOCALITY" != "1" ]]; then
-  echo "ERROR: LOW_TEMP_LOCALITY must be 0 or 1" >&2
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
+  echo "ERROR: --protocol must be ndp or hpcc" >&2
   exit 1
 fi
 
-if [[ "$LOW_TEMP_LOCALITY" == "1" && -n "$DATASET" && "$DATASET" != *"_${LOW_TEMP_SUFFIX}" ]]; then
-  DATASET="${DATASET}_${LOW_TEMP_SUFFIX}"
-fi
-
-case "$DATASET" in
-  incast)
-    DATASET="incast_mono"
-    ;;
-  a2a)
-    DATASET="a2a_mono"
-    ;;
-  incast_${LOW_TEMP_SUFFIX})
-    DATASET="incast_mono_${LOW_TEMP_SUFFIX}"
-    ;;
-  a2a_${LOW_TEMP_SUFFIX})
-    DATASET="a2a_mono_${LOW_TEMP_SUFFIX}"
-    ;;
-esac
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+OUT_DIR="${OUT_DIR:-dash_results/synthetic/${PROTOCOL}/flow_size/plots}"
+LOG_ROOT="dash_dataset/synthetic/${PROTOCOL}"
 mkdir -p "$OUT_DIR"
 
-cmd=(python3 dash_scripts/plot_flow_distributions.py --out-dir "$OUT_DIR" --prefix "$PREFIX")
-if [[ -n "$DATASET" ]]; then
-  cmd+=(--dataset "$DATASET")
-fi
-if [[ "$LOW_TEMP_LOCALITY" == "1" ]]; then
-  cmd+=(--low-temp-locality)
+normalize_dataset_alias() {
+  local name="$1"
+  case "$name" in
+    incast)
+      echo "incast_mono"
+      ;;
+    a2a)
+      echo "a2a_mono"
+      ;;
+    *)
+      echo "$name"
+      ;;
+  esac
+}
+
+collect_all_datasets() {
+  find "$LOG_ROOT" -maxdepth 1 -type f -name 'log_*.txt' \
+    | sed -E 's#^.*/log_##; s#\.txt$##' \
+    | sort -u
+}
+
+emit_group_plot() {
+  local group="$1"
+  shift
+  local datasets=("$@")
+  if [[ ${#datasets[@]} -eq 0 ]]; then
+    echo "Skipping ${group}: no matching datasets found"
+    return
+  fi
+
+  echo "== plotting flow-size group: ${group} (${#datasets[@]} datasets) =="
+  local cmd=(python3 dash_scripts/plot_flow_distributions.py --logs-dir "$LOG_ROOT" --out-dir "$OUT_DIR" --prefix "${PREFIX}_${group}")
+  local ds
+  for ds in "${datasets[@]}"; do
+    cmd+=(--dataset "$ds")
+  done
+  "${cmd[@]}"
+}
+
+if [[ ${#DATASETS[@]} -gt 0 ]]; then
+  normalized=()
+  for ds in "${DATASETS[@]}"; do
+    normalized+=("$(normalize_dataset_alias "$ds")")
+  done
+  emit_group_plot "custom" "${normalized[@]}"
+  echo "Done. Synthetic flow size plots are under: $OUT_DIR"
+  exit 0
 fi
 
-"${cmd[@]}"
+all_ds=()
+while IFS= read -r ds; do
+  [[ -n "$ds" ]] || continue
+  all_ds+=("$ds")
+done < <(collect_all_datasets)
 
-echo "Done. Synthetic flow distribution plots are under: $OUT_DIR"
+test_run=()
+for ds in \
+  incast_mono a2a_mono \
+  incast_bimodal a2a_bimodal \
+  incast_pareto a2a_pareto \
+  incast_exponential_skewed a2a_exponential_skewed; do
+  if printf '%s\n' "${all_ds[@]}" | grep -qx "$ds"; then
+    test_run+=("$ds")
+  fi
+done
+
+burst=()
+alpha=()
+temp=()
+mono=()
+
+for ds in "${all_ds[@]}"; do
+  if [[ "$ds" =~ ^(incast|a2a)_mono_burst_[0-9]+$ ]]; then
+    burst+=("$ds")
+  elif [[ "$ds" =~ ^(incast|a2a)_pareto_alpha_[0-9]+(p[0-9]+)?$ ]]; then
+    alpha+=("$ds")
+  elif [[ "$ds" =~ ^(incast|a2a)_pareto_temp_[0-9]+$ ]]; then
+    temp+=("$ds")
+  elif [[ "$ds" =~ ^(incast|a2a)_mono_[0-9]+$ ]]; then
+    mono+=("$ds")
+  fi
+done
+
+if [[ ${#burst[@]} -gt 0 ]]; then
+  burst_sorted=()
+  while IFS= read -r ds; do
+    [[ -n "$ds" ]] || continue
+    burst_sorted+=("$ds")
+  done < <(printf '%s\n' "${burst[@]}" | sort -V)
+  burst=("${burst_sorted[@]}")
+fi
+if [[ ${#alpha[@]} -gt 0 ]]; then
+  alpha_sorted=()
+  while IFS= read -r ds; do
+    [[ -n "$ds" ]] || continue
+    alpha_sorted+=("$ds")
+  done < <(printf '%s\n' "${alpha[@]}" | sort -V)
+  alpha=("${alpha_sorted[@]}")
+fi
+if [[ ${#temp[@]} -gt 0 ]]; then
+  temp_sorted=()
+  while IFS= read -r ds; do
+    [[ -n "$ds" ]] || continue
+    temp_sorted+=("$ds")
+  done < <(printf '%s\n' "${temp[@]}" | sort -V)
+  temp=("${temp_sorted[@]}")
+fi
+if [[ ${#mono[@]} -gt 0 ]]; then
+  mono_sorted=()
+  while IFS= read -r ds; do
+    [[ -n "$ds" ]] || continue
+    mono_sorted+=("$ds")
+  done < <(printf '%s\n' "${mono[@]}" | sort -V)
+  mono=("${mono_sorted[@]}")
+fi
+
+emit_group_plot "test_run" "${test_run[@]}"
+emit_group_plot "sweep_burst" "${burst[@]}"
+emit_group_plot "sweep_alpha" "${alpha[@]}"
+emit_group_plot "sweep_temp" "${temp[@]}"
+emit_group_plot "sweep_mono" "${mono[@]}"
+
+echo "Done. Synthetic flow size plots are under: $OUT_DIR"

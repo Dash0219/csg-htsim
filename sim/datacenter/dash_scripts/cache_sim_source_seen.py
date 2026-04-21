@@ -24,30 +24,41 @@ import sys
 import re
 from glob import glob
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Sequence, Tuple, cast
+from typing import Dict, Iterable, Iterator, List, Sequence, Tuple, Union, cast
 
 from cache_sim import (
     AdaptiveAdmissionLRU,
     AdmissionFilterLRU,
+    CacheINTFreshnessLRU,
     CacheResult,
-    DualFreshnessLRU,
+    FIFOLastPath,
+    FlowLifetimeAdaptiveTTL,
     FreshnessInvalidationLRU,
     InfiniteLastPath,
     LFULastPath,
     LRULastPath,
     LRULastPathTTL,
     OnlineAdaptiveAdmissionLRU,
-    OnlineAdaptiveDualTTL,
-    SegmentedLRU,
+    PendingAdmissionLRU,
+    PITCollapsedLRU,
+    TinyCacheLRU,
+    TinyLFULRU,
     TimingBloomLRU,
-    TwoFilterOHWLRU,
-    VolatilityAwareLRU,
     print_results,
     write_csv,
 )
 
+try:
+    from cache_sim_fast import simulate_source_seen_records as _simulate_source_seen_records_fast  # pyright: ignore[reportMissingImports]
+except Exception:
+    _simulate_source_seen_records_fast = None
+
 
 SWEEP_SIZES = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+
+# Compact source-seen record format used by large split replays:
+# (source, route_signature, timestamp_ps)
+SourceRecord = Union[Dict[str, object], Tuple[str, tuple, int]]
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,21 +95,28 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--sweep", action="store_true", help="Sweep all policies and sizes.")
     parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use the optional fast source-seen simulation path if available",
+    )
+    parser.add_argument(
         "--cache",
         choices=[
             "lru",
             "lfu",
-            "volatility",
+            "fifo",
             "admission",
+            "pending_admission",
+            "pit",
             "adaptive",
             "online_adaptive",
-            "slru",
             "bloom",
-            "ohw2",
+            "tiny_cache",
+            "tiny_lfu",
             "lru_ttl",
             "f_inv",
-            "dual_fresh",
-            "online_dual_ttl",
+            "cache_int",
+            "life_ttl",
             "infinite_lp",
         ],
         default="lru",
@@ -133,7 +151,7 @@ def parse_args() -> argparse.Namespace:
         "--ttl-ms",
         type=float,
         default=10.0,
-        help="Keep-alive TTL in milliseconds for LRULastPathTTL",
+        help="Keep-alive TTL in milliseconds for LRUTTL",
     )
     parser.add_argument(
         "--fresh-ttl-ms",
@@ -148,16 +166,46 @@ def parse_args() -> argparse.Namespace:
         help="Dynamic-class TTL in milliseconds for DualFreshnessLRU",
     )
     parser.add_argument(
-        "--dual-static-ttl-ms",
-        type=float,
-        default=10.0,
-        help="Static-class TTL in milliseconds for DualFreshnessLRU",
-    )
-    parser.add_argument(
         "--dual-stable-hits",
         type=int,
         default=3,
-        help="Stable hits needed to promote a flow to static class in DualFreshnessLRU",
+        help="Stable hits needed to promote a flow to static class in CacheINTFreshnessLRU",
+    )
+    parser.add_argument(
+        "--pit-download-us",
+        type=float,
+        default=2.0,
+        help="PIT download delay in microseconds for PITCollapsedLRU",
+    )
+    parser.add_argument(
+        "--life-min-ttl-ms",
+        type=float,
+        default=0.1,
+        help="Minimum per-flow TTL in milliseconds for FlowLifetimeAdaptiveTTL",
+    )
+    parser.add_argument(
+        "--life-max-ttl-ms",
+        type=float,
+        default=20.0,
+        help="Maximum per-flow TTL in milliseconds for FlowLifetimeAdaptiveTTL",
+    )
+    parser.add_argument(
+        "--life-base-ttl-ms",
+        type=float,
+        default=0.5,
+        help="Bootstrap TTL in milliseconds before flow lifetime is learned",
+    )
+    parser.add_argument(
+        "--life-ema-alpha",
+        type=float,
+        default=0.2,
+        help="EMA alpha for per-flow gap learning in FlowLifetimeAdaptiveTTL",
+    )
+    parser.add_argument(
+        "--life-ttl-multiplier",
+        type=float,
+        default=4.0,
+        help="Multiplier mapping learned inter-arrival gap to TTL in FlowLifetimeAdaptiveTTL",
     )
     parser.add_argument("--csv", metavar="FILE", help="Write results to CSV")
     parser.add_argument(
@@ -236,14 +284,49 @@ def load_records(
     return records
 
 
-def simulate_source(records: Iterable[Dict[str, object]], cache, oracle=None) -> CacheResult:
+def _unpack_source_record(rec: SourceRecord) -> Tuple[str, tuple, int]:
+    if isinstance(rec, tuple):
+        return rec
+    source = cast(str, rec["source"])
+    route_sig = cast(tuple, rec["route_sig"])
+    ts_ps = cast(int, rec["ts_ps"])
+    return source, route_sig, ts_ps
+
+
+def simulate_source(records: Iterable[SourceRecord], cache, oracle=None, use_fast=False) -> CacheResult:
     result = CacheResult(cache_name=cache.name, capacity=cache.capacity)
+
+    # Fast path currently expects dict-backed records with source/route_sig/ts_ps keys.
+    fast_eligible = (
+        use_fast
+        and _simulate_source_seen_records_fast is not None
+        and isinstance(records, list)
+        and (not records or isinstance(records[0], dict))
+    )
+
+    if fast_eligible:
+        (
+            total,
+            hits,
+            necessary_forwards,
+            new_route_forwards,
+            route_change_forwards,
+            redundant_forwards,
+            evictions,
+        ) = _simulate_source_seen_records_fast(records, cache)
+        result.total = total
+        result.hits = hits
+        result.necessary_forwards = necessary_forwards
+        result.new_route_forwards = new_route_forwards
+        result.route_change_forwards = route_change_forwards
+        result.redundant_forwards = redundant_forwards
+        result.evictions = evictions
+        return result
+
     collector_seen_paths = {}
 
     for rec in records:
-        source = cast(str, rec["source"])
-        route_sig = cast(tuple, rec["route_sig"])
-        ts_ps = cast(int, rec["ts_ps"])
+        source, route_sig, ts_ps = _unpack_source_record(rec)
         key = source
         path_token = route_sig
 
@@ -271,10 +354,10 @@ def simulate_source(records: Iterable[Dict[str, object]], cache, oracle=None) ->
     return result
 
 
-def run_oracle_and_cache(records: List[Dict[str, object]], cache_factory):
+def run_oracle_and_cache(records: Sequence[SourceRecord], cache_factory, use_fast=False):
     oracle = InfiniteLastPath()
     cache = cache_factory()
-    return simulate_source(records, cache, oracle)
+    return simulate_source(records, cache, oracle, use_fast=use_fast)
 
 
 def sanitize_name(text: str) -> str:
@@ -328,7 +411,7 @@ def load_split_records(path: Path, args: argparse.Namespace) -> List[Dict[str, o
 
 
 def sweep_splitwise(
-    files: Sequence[Path], args: argparse.Namespace
+    files: Sequence[Path], args: argparse.Namespace, use_fast=False
 ) -> Tuple[List[CacheResult], List[Tuple[Path, List[CacheResult]]]]:
     by_key: Dict[Tuple[str, object], CacheResult] = {}
     order: List[Tuple[str, object]] = []
@@ -338,7 +421,7 @@ def sweep_splitwise(
         print(f"Loading split {idx}/{len(files)}: {path.name}", file=sys.stderr)
         records = load_split_records(path, args)
         print(f"  Loaded {len(records):,} source records", file=sys.stderr)
-        split_results = sweep(records)
+        split_results = sweep(records, use_fast=args.fast)
         split_outputs.append((path, split_results))
         for r in split_results:
             key = (r.cache_name, r.capacity)
@@ -350,7 +433,7 @@ def sweep_splitwise(
     return [by_key[k] for k in order], split_outputs
 
 
-def run_single_splitwise(files: Sequence[Path], cache_factory, unbounded: bool, args: argparse.Namespace) -> CacheResult:
+def run_single_splitwise(files: Sequence[Path], cache_factory, unbounded: bool, args: argparse.Namespace, use_fast=False) -> CacheResult:
     seed_cache = cache_factory()
     total_result = CacheResult(cache_name=seed_cache.name, capacity=seed_cache.capacity)
 
@@ -361,15 +444,15 @@ def run_single_splitwise(files: Sequence[Path], cache_factory, unbounded: bool, 
 
         split_cache = cache_factory()
         split_oracle = None if unbounded else InfiniteLastPath()
-        split_result = simulate_source(records, split_cache, split_oracle)
+        split_result = simulate_source(records, split_cache, split_oracle, use_fast=args.fast)
         merge_results(total_result, split_result)
 
     return total_result
 
 
-def sweep(records: List[Dict[str, object]]) -> List[CacheResult]:
+def sweep(records: Sequence[SourceRecord], use_fast=False) -> List[CacheResult]:
     results: List[CacheResult] = []
-    results.append(simulate_source(records, InfiniteLastPath(), oracle=None))
+    results.append(simulate_source(records, InfiniteLastPath(), oracle=None, use_fast=use_fast))
 
     ttl_sweep = {
         "0.1ms": 100_000_000,
@@ -381,22 +464,24 @@ def sweep(records: List[Dict[str, object]]) -> List[CacheResult]:
     for size in SWEEP_SIZES:
         for factory in [
             lambda s=size: LRULastPath(s),
+            lambda s=size: FIFOLastPath(s),
             lambda s=size: LFULastPath(s),
-            lambda s=size: VolatilityAwareLRU(s),
             lambda s=size: AdmissionFilterLRU(s),
+            lambda s=size: PendingAdmissionLRU(s),
+            lambda s=size: PITCollapsedLRU(s),
             lambda s=size: AdaptiveAdmissionLRU(s),
             lambda s=size: OnlineAdaptiveAdmissionLRU(s),
-            lambda s=size: SegmentedLRU(s),
             lambda s=size: TimingBloomLRU(s),
-            lambda s=size: TwoFilterOHWLRU(s),
+            lambda s=size: TinyCacheLRU(s),
+            lambda s=size: TinyLFULRU(s),
             lambda s=size: FreshnessInvalidationLRU(s),
-            lambda s=size: DualFreshnessLRU(s),
-            lambda s=size: OnlineAdaptiveDualTTL(s),
+            lambda s=size: CacheINTFreshnessLRU(s),
+            lambda s=size: FlowLifetimeAdaptiveTTL(s),
         ]:
-            results.append(run_oracle_and_cache(records, factory))
+            results.append(run_oracle_and_cache(records, factory, use_fast=use_fast))
 
         for label, ttl_ps in ttl_sweep.items():
-            r = run_oracle_and_cache(records, lambda s=size, t=ttl_ps: LRULastPathTTL(s, t))
+            r = run_oracle_and_cache(records, lambda s=size, t=ttl_ps: LRULastPathTTL(s, t), use_fast=use_fast)
             r.cache_name = f"LRUTtl({label})"
             results.append(r)
 
@@ -438,21 +523,38 @@ def main() -> None:
     ttl_ps = int(args.ttl_ms * 1_000_000_000)
     fresh_ttl_ps = int(args.fresh_ttl_ms * 1_000_000_000)
     dual_dyn_ttl_ps = int(args.dual_dyn_ttl_ms * 1_000_000_000)
-    dual_static_ttl_ps = int(args.dual_static_ttl_ms * 1_000_000_000)
+    pit_download_ps = int(args.pit_download_us * 1_000_000)
+    life_min_ttl_ps = int(args.life_min_ttl_ms * 1_000_000_000)
+    life_max_ttl_ps = int(args.life_max_ttl_ms * 1_000_000_000)
+    life_base_ttl_ps = int(args.life_base_ttl_ms * 1_000_000_000)
     cache_map = {
         "lru": lambda: LRULastPath(args.size),
         "lfu": lambda: LFULastPath(args.size),
-        "volatility": lambda: VolatilityAwareLRU(args.size),
-        "admission": lambda: AdmissionFilterLRU(args.size, pending_reset_every=args.pending_reset_every),
+        "fifo": lambda: FIFOLastPath(args.size),
+        "admission": lambda: AdmissionFilterLRU(
+            args.size,
+            pending_reset_every=args.bloom_epoch_records,
+            bloom_bits=args.bloom_bits,
+            bloom_hashes=args.bloom_hashes,
+        ),
+        "pending_admission": lambda: PendingAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
+        "pit": lambda: PITCollapsedLRU(args.size, download_delay_ps=pit_download_ps),
         "adaptive": lambda: AdaptiveAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
         "online_adaptive": lambda: OnlineAdaptiveAdmissionLRU(args.size),
-        "slru": lambda: SegmentedLRU(args.size),
         "bloom": lambda: TimingBloomLRU(args.size, args.bloom_bits, args.bloom_hashes, args.bloom_epoch_records),
-        "ohw2": lambda: TwoFilterOHWLRU(args.size, args.bloom_bits, args.bloom_hashes, args.bloom_epoch_records),
+        "tiny_cache": lambda: TinyCacheLRU(args.size),
+        "tiny_lfu": lambda: TinyLFULRU(args.size),
         "lru_ttl": lambda: LRULastPathTTL(args.size, ttl_ps),
         "f_inv": lambda: FreshnessInvalidationLRU(args.size, fresh_ttl_ps),
-        "dual_fresh": lambda: DualFreshnessLRU(args.size, dual_dyn_ttl_ps, dual_static_ttl_ps, args.dual_stable_hits),
-        "online_dual_ttl": lambda: OnlineAdaptiveDualTTL(args.size, dual_dyn_ttl_ps, dual_static_ttl_ps, stable_hit_threshold=args.dual_stable_hits),
+        "cache_int": lambda: CacheINTFreshnessLRU(args.size, dual_dyn_ttl_ps, args.dual_stable_hits),
+        "life_ttl": lambda: FlowLifetimeAdaptiveTTL(
+            args.size,
+            min_ttl_ps=life_min_ttl_ps,
+            max_ttl_ps=life_max_ttl_ps,
+            base_ttl_ps=life_base_ttl_ps,
+            ema_alpha=args.life_ema_alpha,
+            ttl_multiplier=args.life_ttl_multiplier,
+        ),
         "infinite_lp": lambda: InfiniteLastPath(),
     }
 

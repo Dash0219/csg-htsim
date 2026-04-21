@@ -18,10 +18,6 @@ def all_dataset_names(include_low_temp=True):
         "a2a_bimodal",
         "incast_pareto",
         "a2a_pareto",
-        "incast_pareto_heavy",
-        "a2a_pareto_heavy",
-        "incast_lognormal_skewed",
-        "a2a_lognormal_skewed",
         "incast_exponential_skewed",
         "a2a_exponential_skewed",
     ]
@@ -127,6 +123,33 @@ def choose_layout(nplots):
     return int(math.ceil(nplots / 3.0)), 3
 
 
+def base_dataset_name(name):
+    suffix = f"_{LOW_TEMP_SUFFIX}"
+    if name.endswith(suffix):
+        return name[: -len(suffix)]
+    return name
+
+
+def natural_sort_key(name):
+    """Sort mixed alpha/numeric dataset names in a human-readable order."""
+    parts = re.split(r"(\d+)", name)
+    key = []
+    for part in parts:
+        if part.isdigit():
+            key.append(int(part))
+        else:
+            key.append(part)
+    return key
+
+
+def ordered_present_names(data):
+    """Known datasets first, then any additional sweep datasets."""
+    preferred = all_dataset_names(include_low_temp=True)
+    present = [name for name in preferred if name in data]
+    extra = sorted((name for name in data if name not in present), key=natural_sort_key)
+    return present + extra
+
+
 def plot_distributions(data, out_dir, prefix, show=False):
     try:
         import matplotlib
@@ -142,8 +165,7 @@ def plot_distributions(data, out_dir, prefix, show=False):
     global_max = max(max(vals) for vals in data.values() if vals)
     bins = build_pow2_bins(global_max)
 
-    order = all_dataset_names(include_low_temp=True)
-    present = [name for name in order if name in data]
+    present = ordered_present_names(data)
     rows, cols = choose_layout(len(present))
 
     # Figure: bar charts (flow size vs frequency)
@@ -158,10 +180,6 @@ def plot_distributions(data, out_dir, prefix, show=False):
         "a2a_bimodal": "mediumseagreen",
         "incast_pareto": "tab:red",
         "a2a_pareto": "salmon",
-        "incast_pareto_heavy": "tab:purple",
-        "a2a_pareto_heavy": "violet",
-        "incast_lognormal_skewed": "tab:brown",
-        "a2a_lognormal_skewed": "peru",
         "incast_exponential_skewed": "tab:cyan",
         "a2a_exponential_skewed": "deepskyblue",
     }
@@ -169,7 +187,9 @@ def plot_distributions(data, out_dir, prefix, show=False):
     for ax, name in zip(axs, present):
         vals = data.get(name, [])
         freq = binned_frequency(vals, bins)
-        ax.bar(x, freq, color=color_map.get(name, "tab:gray"), alpha=0.85)
+        color_key = base_dataset_name(name)
+        color = color_map.get(color_key, "tab:blue" if color_key.startswith("incast_") else "tab:orange" if color_key.startswith("a2a_") else "tab:gray")
+        ax.bar(x, freq, color=color, alpha=0.85)
         ax.set_title(name)
         ax.set_ylabel("# flows")
         ax.grid(True, axis="y", alpha=0.25)
@@ -215,8 +235,8 @@ def main():
         help="Plot low-temp-locality synthetic datasets",
     )
     ap.add_argument("--logs-dir", default="dash_dataset/synthetic", help="Directory containing log_<dataset>.txt files")
-    ap.add_argument("--out-dir", default="dash_results/synthetic/flow_distribution/plots", help="Output directory for figures")
-    ap.add_argument("--prefix", default="flow_distribution", help="Output filename prefix")
+    ap.add_argument("--out-dir", default="dash_results/synthetic/flow_size/plots", help="Output directory for figures")
+    ap.add_argument("--prefix", default="flow_size", help="Output filename prefix")
     ap.add_argument("--show", action="store_true", help="Show plots interactively")
     args = ap.parse_args()
 

@@ -2,6 +2,7 @@
 #include <math.h>
 #include <iostream>
 #include <algorithm>
+#include <inttypes.h>
 #include "hpcc.h"
 #include "queue.h"
 #include <stdio.h>
@@ -505,34 +506,33 @@ void HPCCSink::receivePacket(Packet& pkt) {
     // have we seen everything yet?
     pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_RCVDESTROY);
 
-    // Dash: magic number to only print one end switch
-    // const int last_hop_to_print = 42;
-    // Dash: magic number to only print switches in a range (inclusive)
-    const int last_hop_to_print_l = 0;
-    const int last_hop_to_print_r = 63;
-    int last_hop = p->_int_info[p->_int_hop - 1]._switchID;
-    // if (last_hop != last_hop_to_print) {
-    if (last_hop < last_hop_to_print_l || last_hop > last_hop_to_print_r) {
-        pkt.free();
-        return;
-    }
+    // Buffer per-packet INT data before packet is freed (echoed back to source via ACK)
+    IntEntry int_info_buf[NHOPS];
+    uint32_t int_hop_buf = p->_int_hop;
+    for (uint32_t i = 0; i < int_hop_buf && i < NHOPS; i++)
+        int_info_buf[i] = p->_int_info[i];
 
-    cerr << "Printing INT info for flow " << flow_id() 
-         << ", sink: " << this->get_id() 
-         << ", no. of hops: " << p->_int_hop
-         << endl;
-    
-    for (uint32_t i = 0; i < p->_int_hop; i++) {
-        const IntEntry& e = p->_int_info[i];
-        cerr << "hop " << i
-            << " switch=" << e._switchID
-            << " switchtype=" << e._type
-            << " qlen=" << e._queuesize
-            << " ts=" << e._ts
-            << " txbytes=" << e._txbytes
-            << " linkrate=" << e._linkrate
-            << " packetid=" << e._packetid
-            << endl;
+    // Print INT trace to stderr so it can be inspected separately from stdout logs
+    // fprintf(stderr, "dst=%u\n", p->dst());
+    // if (int_hop_buf > 0) {                                                     // all flows (permutation TM)
+    if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID < 16) {  // 16 ToRs, ~128 concurrent
+    // if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID == 0) { // single ToR, ~8 concurrent
+    // if (int_hop_buf > 0 && p->dst() == 0) {                                      // single sink incast TM
+    // if (int_hop_buf > 0) {
+        // Make stderr fully buffered on first INT record to avoid per-write syscalls
+        static bool s_stderr_buffered = false;
+        if (!s_stderr_buffered) {
+            static char s_int_buf[1 << 22]; // 4 MB output buffer
+            setvbuf(stderr, s_int_buf, _IOFBF, sizeof(s_int_buf));
+            s_stderr_buffered = true;
+        }
+        fprintf(stderr, "INT flow=%u seq=%u hops=%u\n",
+                pkt.flow().flow_id(), seqno, int_hop_buf);
+        for (uint32_t i = 0; i < int_hop_buf; i++) {
+            const IntEntry& e = int_info_buf[i];
+            fprintf(stderr, "  [%u] sw=%u type=%u qs=%u ts=%" PRIu64 " txbytes=%" PRIu64 " pktid=%u\n",
+                    i, e._switchID, e._type, e._queuesize, e._ts, e._txbytes, e._packetid);
+        }
     }
 
     pkt.free();

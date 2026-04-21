@@ -4,17 +4,15 @@ set -euo pipefail
 print_usage() {
   cat <<'EOF'
 Usage:
-  bash dash_scripts/run_plot_temporal_locality_synthetic.sh [options]
+  bash dash_scripts/run_plot_flow_lifetime_synthetic.sh [options]
 
 Options:
   -d, --dataset NAME        Only plot one synthetic dataset (e.g., a2a_pareto)
   -p, --protocol NAME       Transport protocol: ndp or hpcc (default: ndp)
-  -o, --out-dir DIR         Output directory (default: dash_results/synthetic/<protocol>/temporal_locality/plots)
-      --prefix NAME         Output filename prefix (default: temporal_locality)
+  -o, --out-dir DIR         Output directory (default: dash_results/synthetic/<protocol>/flow_lifetime/plots)
+      --prefix NAME         Output filename prefix (default: flow_lifetime)
       --max-records N       Limit parsed records (default: 0 means all)
-      --max-plot-intervals N Cap rendered intervals (default: 300000)
-      --with-concurrency    Overlay concurrency on temporal plots
-      --plot-concurrency    Emit separate concurrency PNG
+      --bins N              Histogram bin count (default: 50)
   -h, --help                Show this help
 EOF
 }
@@ -24,11 +22,9 @@ LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
 LOW_TEMP_SUFFIX="${LOW_TEMP_SUFFIX:-low_temp_locality}"
 PROTOCOL="${PROTOCOL:-ndp}"
 OUT_DIR="${OUT_DIR:-}"
-PREFIX="${PREFIX:-temporal_locality}"
+PREFIX="${PREFIX:-flow_lifetime}"
 MAX_RECORDS="${MAX_RECORDS:-0}"
-MAX_PLOT_INTERVALS="${MAX_PLOT_INTERVALS:-300000}"
-WITH_CONCURRENCY="${WITH_CONCURRENCY:-0}"
-PLOT_CONCURRENCY="${PLOT_CONCURRENCY:-0}"
+BINS="${BINS:-50}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,18 +53,10 @@ while [[ $# -gt 0 ]]; do
       MAX_RECORDS="$2"
       shift 2
       ;;
-    --max-plot-intervals)
-      [[ $# -ge 2 ]] || { echo "ERROR: --max-plot-intervals requires a value" >&2; exit 1; }
-      MAX_PLOT_INTERVALS="$2"
+    --bins)
+      [[ $# -ge 2 ]] || { echo "ERROR: --bins requires a value" >&2; exit 1; }
+      BINS="$2"
       shift 2
-      ;;
-    --with-concurrency)
-      WITH_CONCURRENCY=1
-      shift
-      ;;
-    --plot-concurrency)
-      PLOT_CONCURRENCY=1
-      shift
       ;;
     -h|--help)
       print_usage
@@ -114,24 +102,18 @@ if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
   exit 1
 fi
 
-OUT_DIR="${OUT_DIR:-dash_results/synthetic/${PROTOCOL}/temporal_locality/plots}"
+OUT_DIR="${OUT_DIR:-dash_results/synthetic/${PROTOCOL}/flow_lifetime/plots}"
 LOG_ROOT="dash_dataset/synthetic/${PROTOCOL}"
 mkdir -p "$OUT_DIR"
 
-cmd=(python3 dash_scripts/plot_temporal_locality.py --logs-dir "$LOG_ROOT" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --max-plot-intervals "$MAX_PLOT_INTERVALS")
+cmd=(python3 dash_scripts/plot_flow_lifetimes.py --logs-dir "$LOG_ROOT" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --bins "$BINS")
 if [[ -n "$DATASET" ]]; then
   cmd+=(--dataset "$DATASET")
 fi
 if [[ "$LOW_TEMP_LOCALITY" == "1" ]]; then
   cmd+=(--low-temp-locality)
 fi
-if [[ "$WITH_CONCURRENCY" == "1" ]]; then
-  cmd+=(--with-concurrency)
-fi
-if [[ "$PLOT_CONCURRENCY" == "1" ]]; then
-  cmd+=(--plot-concurrency)
-fi
 
 "${cmd[@]}"
 
-echo "Done. Synthetic temporal locality plots are under: $OUT_DIR"
+echo "Done. Synthetic flow lifetime plots are under: $OUT_DIR"

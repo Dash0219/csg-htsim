@@ -22,6 +22,34 @@ import matplotlib.pyplot as plt
 LOW_TEMP_SUFFIX = "low_temp_locality"
 
 
+def is_supported_dataset_name(name):
+    if name in set(synthetic_dataset_names(include_low_temp=True)):
+        return True
+    if re.match(r"^(incast|a2a)_pareto_temp_[0-9]+$", name):
+        return True
+    if re.match(r"^(incast|a2a)_pareto_alpha_[0-9]+(?:p[0-9]+)?$", name):
+        return True
+    if re.match(r"^(incast|a2a)_pareto_xm_[0-9]+$", name):
+        return True
+    return False
+
+
+def discover_synthetic_logfiles(logs_dir, low_temp_only=False, include_low_temp=False):
+    if not os.path.isdir(logs_dir):
+        return []
+    out = []
+    for name in sorted(os.listdir(logs_dir)):
+        if not (name.startswith("log_") and name.endswith(".txt")):
+            continue
+        ds = name[4:-4]
+        if low_temp_only and not ds.endswith(f"_{LOW_TEMP_SUFFIX}"):
+            continue
+        if not include_low_temp and ds.endswith(f"_{LOW_TEMP_SUFFIX}"):
+            continue
+        out.append(os.path.join(logs_dir, name))
+    return out
+
+
 def synthetic_dataset_names(include_low_temp=False):
     names = [
         "incast_mono",
@@ -30,10 +58,6 @@ def synthetic_dataset_names(include_low_temp=False):
         "a2a_bimodal",
         "incast_pareto",
         "a2a_pareto",
-        "incast_pareto_heavy",
-        "a2a_pareto_heavy",
-        "incast_lognormal_skewed",
-        "a2a_lognormal_skewed",
         "incast_exponential_skewed",
         "a2a_exponential_skewed",
     ]
@@ -42,8 +66,8 @@ def synthetic_dataset_names(include_low_temp=False):
     return names
 
 
-def synthetic_log_path(dataset_name):
-    return f"dash_dataset/synthetic/log_{dataset_name}.txt"
+def synthetic_log_path(dataset_name, logs_dir="dash_dataset/synthetic"):
+    return os.path.join(logs_dir, f"log_{dataset_name}.txt")
 
 
 def normalize_dataset_alias(name):
@@ -214,6 +238,11 @@ def parse_args():
         default="dash_results/synthetic/temporal_locality/plots",
         help="Output directory for PNGs",
     )
+    ap.add_argument(
+        "--logs-dir",
+        default="dash_dataset/synthetic",
+        help="Directory containing synthetic log_<dataset>.txt files",
+    )
     ap.add_argument("--prefix", default="temporal_locality", help="Output filename prefix")
     ap.add_argument("--max-records", type=int, default=0, help="Only use first N records (0 means all)")
     ap.add_argument(
@@ -247,8 +276,8 @@ def parse_args():
     return ap.parse_args()
 
 
-def default_synthetic_logs():
-    return [synthetic_log_path(n) for n in synthetic_dataset_names(include_low_temp=False)]
+def default_synthetic_logs(logs_dir):
+    return [synthetic_log_path(n, logs_dir) for n in synthetic_dataset_names(include_low_temp=False)]
 
 
 def sanitize_name(path):
@@ -262,7 +291,6 @@ def main():
     args = parse_args()
     split_gap_ps = int(args.split_gap_us * 1_000_000)
 
-    known_datasets = set(synthetic_dataset_names(include_low_temp=True))
     selected_datasets = []
     for d in args.dataset:
         d = normalize_dataset_alias(d)
@@ -271,7 +299,7 @@ def main():
         else:
             selected_datasets.append(d)
 
-    unknown = [d for d in selected_datasets if d not in known_datasets]
+    unknown = [d for d in selected_datasets if not is_supported_dataset_name(d)]
     if unknown:
         raise ValueError(f"Unknown dataset name(s): {', '.join(unknown)}")
 
@@ -282,14 +310,14 @@ def main():
     else:
         logfiles = []
         if selected_datasets:
-            logfiles.extend(synthetic_log_path(d) for d in selected_datasets)
+            logfiles.extend(synthetic_log_path(d, args.logs_dir) for d in selected_datasets)
         elif args.synthetic_defaults or not args.logfiles:
             if args.low_temp_locality:
-                logfiles.extend(synthetic_log_path(n) for n in synthetic_dataset_names(include_low_temp=True) if n.endswith(f"_{LOW_TEMP_SUFFIX}"))
+                logfiles.extend(discover_synthetic_logfiles(args.logs_dir, low_temp_only=True, include_low_temp=True))
             elif args.include_low_temp_defaults:
-                logfiles.extend(synthetic_log_path(n) for n in synthetic_dataset_names(include_low_temp=True))
+                logfiles.extend(discover_synthetic_logfiles(args.logs_dir, include_low_temp=True))
             else:
-                logfiles.extend(default_synthetic_logs())
+                logfiles.extend(discover_synthetic_logfiles(args.logs_dir, include_low_temp=False))
 
     deduped = []
     seen = set()

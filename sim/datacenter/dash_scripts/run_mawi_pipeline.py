@@ -128,7 +128,7 @@ def main() -> None:
     run_step(split_cmd, dc_root, args.dry_run)
 
     if not args.skip_plots:
-        plot_out = Path("dash_results/mawi/flow_distribution/plots")
+        plot_out = Path("dash_results/mawi/flow_size/plots")
         plot_cmd = [
             py,
             str(scripts_dir / "plot_sink_flow_distributions.py"),
@@ -137,7 +137,7 @@ def main() -> None:
             "--out-dir",
             str(plot_out),
             "--prefix",
-            f"sink_flow_distribution_{split_dir.name}",
+            f"sink_flow_size_{split_dir.name}",
             "--cols",
             "4",
         ]

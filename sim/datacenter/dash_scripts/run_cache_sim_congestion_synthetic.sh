@@ -4,38 +4,40 @@ set -euo pipefail
 print_usage() {
   cat <<'EOF'
 Usage:
-  bash dash_scripts/run_cache_sim_source_seen_synthetic.sh [options]
+  bash dash_scripts/run_cache_sim_congestion_synthetic.sh [options]
 
 Options:
   -d, --dataset NAME        Process one synthetic dataset family (example: a2a_pareto)
-  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: ndp)
+  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: hpcc)
   -f, --fast                Use the optimized cache simulator (default)
       --no-fast             Disable the optimized cache simulator
-  -h, --help           Show this help
+      --qs-threshold N      Queue-size anomaly threshold in bytes (default: 50000)
+      --key-level MODE      switch | flow (default: switch)
+      --signature MODE      seen | bucket (default: seen)
+      --bucket-bytes N      Bucket width when --signature bucket (default: 8192)
+  -h, --help                Show this help
 
 Environment variables:
   PROTOCOL             Equivalent to --protocol (ndp/hpcc)
   FAST                 Equivalent to --fast (1/0, default: 1)
   DATASET              Equivalent to --dataset
   TARGET_PATTERN       Deprecated legacy alias for DATASET
+  QS_THRESHOLD         Equivalent to --qs-threshold
+  KEY_LEVEL            Equivalent to --key-level
+  SIGNATURE_MODE       Equivalent to --signature
+  BUCKET_BYTES         Equivalent to --bucket-bytes
 EOF
 }
 
 DATASET="${DATASET:-}"
 TARGET_PATTERN="${TARGET_PATTERN:-}"
 LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
-PROTOCOL="${PROTOCOL:-ndp}"
+PROTOCOL="${PROTOCOL:-hpcc}"
 FAST="${FAST:-1}"
-
-is_flow_size_sweep_dataset() {
-  local name="$1"
-  [[ "$name" =~ ^(incast|a2a)_mono_[0-9]+$ ]]
-}
-
-is_base_dataset_name() {
-  local name="$1"
-  [[ "$name" =~ ^(incast|a2a)_(mono|bimodal|pareto|exponential_skewed)$ ]]
-}
+QS_THRESHOLD="${QS_THRESHOLD:-50000}"
+KEY_LEVEL="${KEY_LEVEL:-switch}"
+SIGNATURE_MODE="${SIGNATURE_MODE:-seen}"
+BUCKET_BYTES="${BUCKET_BYTES:-8192}"
 
 is_supported_dataset_name() {
   local name="$1"
@@ -52,6 +54,11 @@ is_supported_dataset_name() {
     return 0
   fi
   return 1
+}
+
+is_base_dataset_name() {
+  local name="$1"
+  [[ "$name" =~ ^(incast|a2a)_(mono|bimodal|pareto|exponential_skewed)$ ]]
 }
 
 while [[ $# -gt 0 ]]; do
@@ -80,6 +87,38 @@ while [[ $# -gt 0 ]]; do
       FAST=0
       shift
       ;;
+    --qs-threshold)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --qs-threshold requires a value" >&2
+        exit 1
+      fi
+      QS_THRESHOLD="$2"
+      shift 2
+      ;;
+    --key-level)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --key-level requires a value" >&2
+        exit 1
+      fi
+      KEY_LEVEL="$2"
+      shift 2
+      ;;
+    --signature)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --signature requires a value" >&2
+        exit 1
+      fi
+      SIGNATURE_MODE="$2"
+      shift 2
+      ;;
+    --bucket-bytes)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --bucket-bytes requires a value" >&2
+        exit 1
+      fi
+      BUCKET_BYTES="$2"
+      shift 2
+      ;;
     -h|--help)
       print_usage
       exit 0
@@ -107,8 +146,16 @@ if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
   echo "ERROR: --protocol must be ndp or hpcc" >&2
   exit 1
 fi
+if [[ "$KEY_LEVEL" != "switch" && "$KEY_LEVEL" != "flow" ]]; then
+  echo "ERROR: --key-level must be switch or flow" >&2
+  exit 1
+fi
+if [[ "$SIGNATURE_MODE" != "seen" && "$SIGNATURE_MODE" != "bucket" ]]; then
+  echo "ERROR: --signature must be seen or bucket" >&2
+  exit 1
+fi
 
-OUT_DIR="dash_results/synthetic/${PROTOCOL}/cache_sim/source_seen"
+OUT_DIR="dash_results/synthetic/${PROTOCOL}/cache_sim/congestion"
 LOG_ROOT="dash_dataset/synthetic/${PROTOCOL}"
 LOW_TEMP_SUFFIX="${LOW_TEMP_SUFFIX:-low_temp_locality}"
 
@@ -190,17 +237,32 @@ for p in "${patterns[@]}"; do
     continue
   fi
   log="$LOG_ROOT/log_${p}.txt"
-  csv="$OUT_DIR/results_synthetic_source_seen_${p}.csv"
+  csv="$OUT_DIR/results_synthetic_congestion_${p}.csv"
   if [[ ! -f "$log" ]]; then
     echo "Skipping missing input: $log"
     continue
   fi
-  echo "== source-seen INT sweep: $p =="
+  echo "== congestion INT sweep: $p =="
   if [[ "$FAST" == "1" ]]; then
-    python3 dash_scripts/cache_sim_source_seen_int.py "$log" --route-key seen --sweep --fast --quiet-table --csv "$csv"
+    python3 dash_scripts/cache_sim_congestion_int.py "$log" \
+      --sweep \
+      --fast \
+      --quiet-table \
+      --qs-threshold "$QS_THRESHOLD" \
+      --key-level "$KEY_LEVEL" \
+      --signature "$SIGNATURE_MODE" \
+      --bucket-bytes "$BUCKET_BYTES" \
+      --csv "$csv"
   else
-    python3 dash_scripts/cache_sim_source_seen_int.py "$log" --route-key seen --sweep --quiet-table --csv "$csv"
+    python3 dash_scripts/cache_sim_congestion_int.py "$log" \
+      --sweep \
+      --quiet-table \
+      --qs-threshold "$QS_THRESHOLD" \
+      --key-level "$KEY_LEVEL" \
+      --signature "$SIGNATURE_MODE" \
+      --bucket-bytes "$BUCKET_BYTES" \
+      --csv "$csv"
   fi
 done
 
-echo "Done. Source-seen CSV outputs are under: $OUT_DIR"
+echo "Done. Congestion CSV outputs are under: $OUT_DIR"

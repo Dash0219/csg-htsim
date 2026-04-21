@@ -11,38 +11,50 @@ the bounded cache evicted the flow entry and lost track of it.
 
 Implemented caches
 ------------------
-  InfiniteLastPath      — unbounded dict: flow → last_path       (oracle / baseline A)
-  LRULastPath(N)        — N slots, LRU eviction, stores last path per flow
-  FIFOLastPath(N)       — N slots, FIFO eviction
-  LFULastPath(N)        — N slots, LFU eviction (least-frequently-seen flow evicted)
-                          classic frequency vs recency comparison against LRU
-  VolatilityAwareLRU(N) — N slots, evicts most path-stable flow first
-                          domain-motivated: volatile flows change path often so keeping
-                          them in cache is more valuable than keeping stable flows
-  AdmissionFilterLRU(N)     — N slots, LRU eviction, but only admits a flow after its
-                              second encounter (second-chance admission).  Filters
-                              short-lived flows that would otherwise pollute the cache.
-  SegmentedLRU(N)           — N slots split into probation (N//4) + protected (N*3//4).
-                              New flows enter probation; a second access promotes to protected.
-                              Protected entries can only be evicted by demotion, not new arrivals.
-                              Same total budget as LRU — no separate sketch needed.
-    AdaptiveAdmissionLRU(N) — AdmissionFilterLRU with pressure-adaptive bypass.
+    Infinite              — unbounded dict: flow → last_path       (oracle / baseline)
+    LRU(N)                — N slots, LRU eviction, stores last path per flow
+    FIFO(N)               — N slots, FIFO eviction
+    LFU(N)                — N slots, LFU eviction (least-frequently-seen flow evicted)
+                                                    classic frequency vs recency comparison against LRU
+        OneHitWonderLRU(N)    — N slots, LRU eviction, but only admits a flow after its
+                                                        second encounter within a recent Bloom window.
+                                                        Filters short-lived flows that would otherwise pollute the cache.
+        PendingAdmissionLRU(N) — N slots, LRU eviction + exact pending table.
+                                                        New flows are admitted on second touch using an exact FIFO
+                                                        pending sketch (legacy baseline).
+        PITCollapsedLRU(N)     — N slots, PIT-style inflight collapsing before cache admission.
+                                                        Collapses repeated requests while content is downloading.
+        AdaptiveAdmissionLRU(N) — OneHitWonderLRU with pressure-adaptive bypass.
                                                         Under low eviction pressure, behaves like plain LRU
                                                         (admits immediately). Under high pressure, switches
                                                         to second-chance admission to reduce pollution.
-    TimingBloomLRU(N)       — Pressure-adaptive 2-window timing Bloom admission.
+        OnlineAdaptiveAdmissionLRU(N)
+                                                        — AdaptiveAdmissionLRU with online mode switching.
+        TimeLimitedBloomLRU(N)  — Time-limited Bloom admission with rolling freshness.
                                                         Bloom gating is only enforced while the cache is
                                                         under sustained eviction pressure.
-    TwoFilterOHWLRU(N)      — Pressure-adaptive Akamai-style OHW with two Bloom
-                                                        filters. Under pressure, a flow is admitted on
-                                                        second touch (f1/f2 evidence); otherwise bypassed.
-    FreshnessInvalidationLRU(N)
-                                                    — N slots, LRU + hard freshness expiration.
+        TinyLFULRU(N)           — N slots, LRU eviction + TinyLFU admission sketch.
+                                                        Candidates are admitted only when estimated frequency
+                                                        exceeds the current LRU victim's frequency.
+        TinyCacheLRU(N)         — N slots, LRU eviction + TinyCache admission filter.
+                                                        Uses a table of recent fingerprints, random eviction
+                                                        within a set when full, and a set-local frequency estimate.
+        FreshnessInvalidationLRU(N)
+                                                        — N slots, LRU + hard freshness expiration.
                                                         Expired entries are invalidated before decision,
                                                         approximating collector-driven stale-state purge.
-    DualFreshnessLRU(N)     — N slots, LRU + dual TTL classes.
-                                                        Flows that stay stable for K hits are treated as
-                                                        static (long TTL), otherwise time-variant (short TTL).
+        CacheINTFreshnessLRU(N) — N slots, Cache-INT-inspired split handling:
+                                                        time-variant entries use freshness TTL,
+                                                        stable entries are static (no TTL), and eviction
+                                                        prefers least-fresh dynamic entries.
+        FlowLifetimeAdaptiveTTL(N)
+                                                        — N slots, per-flow adaptive freshness window derived
+                                                        from observed inter-arrival gaps.
+
+Archived helper policies remain in the file for reference, but are not surfaced
+by the default CLI policy list:
+    VolatilityAwareLRU, SegmentedLRU, TwoFilterOHWLRU, DualFreshnessLRU,
+    OnlineAdaptiveDualTTL
 
 Usage
 -----
@@ -60,9 +72,15 @@ import csv
 import heapq
 import argparse
 import hashlib
+import random
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from typing import cast
+
+try:
+    from cache_sim_fast import simulate_records as _simulate_records_fast  # pyright: ignore[reportMissingImports]
+except Exception:
+    _simulate_records_fast = None
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +175,7 @@ class CacheResult:
 
 class InfiniteLastPath:
     """Oracle / baseline A — never evicts and remembers all seen paths per flow."""
-    name = "InfiniteLastPath"
+    name = "Infinite"
     capacity = float('inf')
 
     def __init__(self):
@@ -185,7 +203,7 @@ class LRULastPath:
     Eviction of a flow means its path is forgotten; the next packet for
     that flow will be a miss (possibly redundant).
     """
-    name = "LRULastPath"
+    name = "LRU"
 
     def __init__(self, capacity):
         self.capacity = capacity
@@ -213,7 +231,7 @@ class FIFOLastPath:
     Bounded FIFO cache.  N slots.  Evicts in insertion order regardless of
     access frequency.
     """
-    name = "FIFOLastPath"
+    name = "FIFO"
 
     def __init__(self, capacity):
         self.capacity = capacity
@@ -300,7 +318,7 @@ class LRULastPathTTL:
         per TTL window regardless of path stability.
       - Extra forwards for long-lived stable flows (keep-alive overhead).
     """
-    name = "LRULastPathTTL"
+    name = "LRUTTL"
 
     def __init__(self, capacity, ttl_ps=10_000_000_000):
         self.capacity = capacity
@@ -440,7 +458,7 @@ class LFULastPath:
     O(log N) eviction using a lazy-deletion min-heap keyed on (freq, seq).
     Stale heap entries (freq changed since push) are discarded on pop.
     """
-    name = "LFULastPath"
+    name = "LFU"
 
     def __init__(self, capacity):
         self.capacity = capacity
@@ -557,53 +575,40 @@ class VolatilityAwareLRU:
 
 class AdmissionFilterLRU:
     """
-    LRU cache with second-chance admission control.
+    One-hit-wonder admission control.
 
-    A flow is only admitted to the main cache after it has been seen a second
-    time (second-chance / TinyLFU-style admission filter).
-
-    On the first encounter the packet is always forwarded (miss), but the flow
-    is placed in a bounded pending sketch rather than the main cache.
-    On the second+ encounter the flow is admitted and handled by the main LRU.
-
-    The pending sketch has the same capacity as the main cache (total memory
-    budget = 2 × capacity), and evicts FIFO when full.  In this simulator the
-    sketch is an exact table; a hardware implementation would typically use a
-    compact probabilistic structure (e.g., a counting Bloom filter).
-
-    When a flow is evicted from the main cache it loses its cached state and
-    must re-enter via the pending sketch on its next encounter (second-chance
-    restarts on eviction — conservative but simple).
+    This is the cache-on-second-hit rule described in the Akamai survey paper:
+    on the first encounter a flow is recorded in a Bloom filter and forwarded;
+    on the second encounter within the recent window it is admitted to the LRU
+    cache.  The Bloom filter is periodically refreshed so the notion of
+    "recent" follows the current access stream rather than unbounded history.
 
     Key tradeoff vs plain LRU:
       + Protects main cache slots from one-shot / short-lived flows
-      + At small capacities, pending absorbs first-encounter misses cheaply
-      - Two encounters needed to start suppressing a new flow
-      - One extra necessary forward per new long-lived flow (the first encounter)
+      + Reduces write churn by bypassing the first encounter
+      - Second encounter required before cache admission
+      - Bloom false positives can admit a few borderline flows early
     """
-    name = "AdmissionFilterLRU"
+    name = "OneHitWonderLRU"
 
-    def __init__(self, capacity, pending_size=None, pending_reset_every=0):
+    def __init__(self, capacity, pending_size=None, pending_reset_every=0,
+                 bloom_bits=1 << 18, bloom_hashes=4):
         if capacity <= 0:
             raise ValueError("capacity must be > 0")
-        self.capacity    = capacity
-        # Pending sketch is the same size as the main cache by default.
-        # This represents a realistic total memory budget of 2 × capacity.
-        self._pending_cap = pending_size if pending_size is not None else capacity
-        if self._pending_cap <= 0:
-            raise ValueError("pending_size must be > 0")
-        # Optional periodic reset of pending sketch to emulate Bloom aging.
-        # Default 0 disables reset (current FIFO sketch already self-refreshes).
-        self._pending_reset_every = pending_reset_every
+        self.capacity = capacity
+        self._epoch = pending_reset_every
         self._ops = 0
+        self._seen = RollingBloomFilter(bits=bloom_bits, hashes=bloom_hashes)
         self._store   = OrderedDict()  # admitted flows: flow_id -> last_path  (LRU)
-        self._pending = OrderedDict()  # pending flows: flow_id -> first_path   (FIFO)
+
+    def _tick(self):
+        self._ops += 1
+        if self._epoch > 0 and self._ops % self._epoch == 0:
+            self._seen.reset_epoch()
 
     def lookup_and_update(self, flow, path, ts=0):
+        self._tick()
         evicted = False
-        self._ops += 1
-        if self._pending_reset_every and self._ops % self._pending_reset_every == 0:
-            self._pending.clear()
 
         # --- Already admitted to main cache ---
         if flow in self._store:
@@ -612,27 +617,138 @@ class AdmissionFilterLRU:
             self._store[flow] = path
             return (old == path), False
 
-        # --- In pending sketch (seen exactly once before) ---
+        seen_recently = self._seen.contains(flow)
+        self._seen.add(flow)
+
+        if not seen_recently:
+            return False, False
+
+        if len(self._store) >= self.capacity:
+            self._store.popitem(last=False)
+            evicted = True
+        self._store[flow] = path
+        return False, evicted
+
+
+class PendingAdmissionLRU:
+    """
+    LRU with exact second-touch admission (legacy admission baseline).
+
+    This is the pre-Bloom admission filter implementation used previously in
+    this repo: first touch stores flow state in a bounded FIFO pending table;
+    second touch admits to the main LRU cache.
+    """
+    name = "PendingAdmissionLRU"
+
+    def __init__(self, capacity, pending_size=None, pending_reset_every=0):
+        if capacity <= 0:
+            raise ValueError("capacity must be > 0")
+        self.capacity = capacity
+        self._pending_cap = pending_size if pending_size is not None else capacity
+        if self._pending_cap <= 0:
+            raise ValueError("pending_size must be > 0")
+        self._pending_reset_every = pending_reset_every
+        self._ops = 0
+        self._store = OrderedDict()  # admitted flows: flow_id -> last_path (LRU)
+        self._pending = OrderedDict()  # pending flows: flow_id -> first_path (FIFO)
+
+    def lookup_and_update(self, flow, path, ts=0):
+        evicted = False
+        self._ops += 1
+        if self._pending_reset_every and self._ops % self._pending_reset_every == 0:
+            self._pending.clear()
+
+        if flow in self._store:
+            old = self._store[flow]
+            self._store.move_to_end(flow)
+            self._store[flow] = path
+            return (old == path), False
+
         if flow in self._pending:
-            old = self._pending.pop(flow)           # remove from sketch
-            # Admit to main cache
+            old = self._pending.pop(flow)
             if len(self._store) >= self.capacity:
-                self._store.popitem(last=False)     # evict LRU from main cache
+                self._store.popitem(last=False)
                 evicted = True
             self._store[flow] = path
-            # Hit only if path is unchanged since first encounter
             return (old == path), evicted
 
-        # --- First encounter: place in pending sketch ---
         if len(self._pending) >= self._pending_cap:
-            self._pending.popitem(last=False)       # FIFO evict oldest pending entry
+            self._pending.popitem(last=False)
         self._pending[flow] = path
-        return False, evicted   # always forward on first sight
+        return False, False
+
+
+class PITCollapsedLRU:
+    """
+    LRU cache with Pending-Interest-Table style collapsed forwarding.
+
+    Behavior:
+      - On miss, create an inflight PIT entry and forward exactly one request.
+      - While inflight and before response arrival, same (flow,path) requests are
+        collapsed (suppressed) by PIT.
+      - When download delay elapses, content is admitted to cache and PIT entry
+        is cleared.
+
+    This approximates the PIT semantics studied in the PIT cache paper with a
+    fixed per-object download delay in picoseconds.
+    """
+    name = "PITCollapsedLRU"
+
+    def __init__(self, capacity, download_delay_ps=2_000_000, pit_capacity=None):
+        if capacity <= 0:
+            raise ValueError("capacity must be > 0")
+        if download_delay_ps <= 0:
+            raise ValueError("download_delay_ps must be > 0")
+        if pit_capacity is None:
+            pit_capacity = capacity
+        if pit_capacity <= 0:
+            raise ValueError("pit_capacity must be > 0")
+        self.capacity = capacity
+        self.download_delay_ps = download_delay_ps
+        self.pit_capacity = pit_capacity
+        self._store = OrderedDict()  # flow -> last_path
+        # Keep PIT state bounded so auxiliary memory does not dominate cache size.
+        self._pit = OrderedDict()  # flow -> (pending_path, ready_ts)
+
+    def _admit(self, flow, path):
+        evicted = False
+        if len(self._store) >= self.capacity:
+            self._store.popitem(last=False)
+            evicted = True
+        self._store[flow] = path
+        return evicted
+
+    def lookup_and_update(self, flow, path, ts=0):
+        evicted = False
+
+        if flow in self._pit:
+            pending_path, ready_ts = self._pit[flow]
+            if ts < ready_ts and pending_path == path:
+                self._pit.move_to_end(flow)
+                return True, False
+            if ts >= ready_ts:
+                evicted = self._admit(flow, pending_path)
+                del self._pit[flow]
+            elif pending_path != path:
+                self._pit[flow] = (path, ts + self.download_delay_ps)
+                self._pit.move_to_end(flow)
+                return False, False
+
+        if flow in self._store:
+            old = self._store[flow]
+            self._store.move_to_end(flow)
+            self._store[flow] = path
+            return (old == path), evicted
+
+        if len(self._pit) >= self.pit_capacity:
+            self._pit.popitem(last=False)
+        self._pit[flow] = (path, ts + self.download_delay_ps)
+        return False, evicted
 
 
 class AdaptiveAdmissionLRU:
     """
-    AdmissionFilterLRU with pressure-adaptive bypass.
+    OneHitWonderLRU with pressure-adaptive bypass.
 
     While eviction pressure is low, new flows are admitted immediately
     (LRU-like behavior) to avoid unnecessary cold-start misses.
@@ -936,6 +1052,94 @@ class OnlineAdaptiveDualTTL:
         return False, evicted
 
 
+class FlowLifetimeAdaptiveTTL:
+    """
+    LRU with per-flow adaptive freshness windows.
+
+    Each flow tracks an EMA of inter-arrival gap in picoseconds. The flow TTL is
+    derived from this EMA and clamped to configurable bounds:
+
+      ttl(flow) = clamp(ttl_multiplier * ema_gap(flow), min_ttl_ps, max_ttl_ps)
+
+    Intuition:
+      - Fast/short-lived flows keep short TTLs.
+      - Slower/long-lived flows keep longer TTLs.
+
+    This is an explicit "lifetime-aware freshness" policy without requiring an
+    external control loop.
+    """
+    name = "FlowLifetimeAdaptiveTTL"
+
+    def __init__(
+        self,
+        capacity,
+        min_ttl_ps=100_000_000,
+        max_ttl_ps=20_000_000_000,
+        base_ttl_ps=500_000_000,
+        ema_alpha=0.2,
+        ttl_multiplier=4.0,
+    ):
+        if capacity <= 0:
+            raise ValueError("capacity must be > 0")
+        if min_ttl_ps <= 0 or max_ttl_ps <= 0 or base_ttl_ps <= 0:
+            raise ValueError("TTL values must be > 0")
+        if min_ttl_ps > max_ttl_ps:
+            raise ValueError("min_ttl_ps must be <= max_ttl_ps")
+        if not (0.0 < ema_alpha <= 1.0):
+            raise ValueError("ema_alpha must be in (0, 1]")
+        if ttl_multiplier <= 0.0:
+            raise ValueError("ttl_multiplier must be > 0")
+
+        self.capacity = capacity
+        self.min_ttl_ps = min_ttl_ps
+        self.max_ttl_ps = max_ttl_ps
+        self.base_ttl_ps = base_ttl_ps
+        self.ema_alpha = ema_alpha
+        self.ttl_multiplier = ttl_multiplier
+
+        # flow -> (last_path, last_seen_ts, ema_gap_ps, samples)
+        self._store = OrderedDict()
+
+    def _effective_ttl(self, ema_gap_ps, samples):
+        if samples <= 1:
+            return self.base_ttl_ps
+        ttl = int(ema_gap_ps * self.ttl_multiplier)
+        if ttl < self.min_ttl_ps:
+            return self.min_ttl_ps
+        if ttl > self.max_ttl_ps:
+            return self.max_ttl_ps
+        return ttl
+
+    def _update_ema(self, prev_ema, gap_ps, samples):
+        gap_ps = max(0, int(gap_ps))
+        if samples <= 1:
+            return gap_ps
+        return int(self.ema_alpha * gap_ps + (1.0 - self.ema_alpha) * prev_ema)
+
+    def lookup_and_update(self, flow, path, ts=0):
+        evicted = False
+
+        if flow in self._store:
+            old_path, last_ts, ema_gap_ps, samples = self._store[flow]
+            age = max(0, int(ts - last_ts))
+            ttl_ps = self._effective_ttl(ema_gap_ps, samples)
+
+            self._store.move_to_end(flow)
+            hit = (old_path == path) and (age < ttl_ps)
+
+            samples = samples + 1
+            ema_gap_ps = self._update_ema(ema_gap_ps, age, samples)
+            self._store[flow] = (path, ts, ema_gap_ps, samples)
+            return hit, False
+
+        if len(self._store) >= self.capacity:
+            self._store.popitem(last=False)
+            evicted = True
+
+        self._store[flow] = (path, ts, self.base_ttl_ps, 1)
+        return False, evicted
+
+
 class TimingBloomLRU:
     """
     LRU cache with timing Bloom admission.
@@ -943,7 +1147,7 @@ class TimingBloomLRU:
     A new flow is admitted only if its ID appears in the recent 2-window Bloom
     history. Otherwise it is bypassed and recorded in the current Bloom window.
     """
-    name = "TimingBloomLRU"
+    name = "TimeLimitedBloomLRU"
 
     def __init__(self, capacity, bloom_bits=1 << 18, bloom_hashes=4, bloom_epoch_records=256,
                  pressure_window=10000, eviction_high_watermark=0.02):
@@ -1084,6 +1288,311 @@ class TwoFilterOHWLRU:
         return False, evicted
 
 
+class _TinyLFUSketch:
+    """TinyLFU frequency sketch with reset aging and doorkeeper semantics."""
+
+    def __init__(self, sample_size, counter_cap):
+        if sample_size <= 0:
+            raise ValueError("sample_size must be > 0")
+        if counter_cap <= 0:
+            raise ValueError("counter_cap must be > 0")
+        self.sample_size = sample_size
+        self.counter_cap = counter_cap
+        self._ops = 0
+        self._counts = {}
+        self._doorkeeper = set()
+
+    def _reset(self):
+        new_counts = {}
+        for key, value in self._counts.items():
+            half = value // 2
+            if half > 0:
+                new_counts[key] = half
+        self._counts = new_counts
+        self._doorkeeper.clear()
+        self._ops = 0
+
+    def observe(self, key):
+        self._ops += 1
+        if key in self._doorkeeper:
+            nxt = self._counts.get(key, 0) + 1
+            self._counts[key] = min(nxt, self.counter_cap)
+        else:
+            self._doorkeeper.add(key)
+
+        if self._ops >= self.sample_size:
+            self._reset()
+
+    def estimate(self, key):
+        return self._counts.get(key, 0) + (1 if key in self._doorkeeper else 0)
+
+
+class TinyLFULRU:
+    """
+    LRU eviction with TinyLFU admission.
+
+    Policy behavior:
+      - Maintains recency order only for admitted entries (LRU victim candidate).
+      - Maintains an approximate TinyLFU frequency sketch over recent accesses.
+      - On misses with full cache, compares candidate frequency to LRU victim
+        frequency and only admits when candidate is more frequent.
+
+    This follows the TinyLFU paper's admission-control spirit with a practical
+    reset-aging sketch and doorkeeper front-end.
+    """
+    name = "TinyLFULRU"
+
+    def __init__(self, capacity, sample_multiplier=8):
+        if capacity <= 0:
+            raise ValueError("capacity must be > 0")
+        if sample_multiplier <= 0:
+            raise ValueError("sample_multiplier must be > 0")
+        self.capacity = capacity
+        self._store = OrderedDict()  # flow_id -> last_path
+        sample_size = max(capacity, int(capacity * sample_multiplier))
+        counter_cap = max(1, sample_size // capacity)
+        self._sketch = _TinyLFUSketch(sample_size=sample_size, counter_cap=counter_cap)
+
+    def lookup_and_update(self, flow, path, ts=0):
+        self._sketch.observe(flow)
+
+        if flow in self._store:
+            old = self._store[flow]
+            self._store.move_to_end(flow)
+            self._store[flow] = path
+            return (old == path), False
+
+        if len(self._store) < self.capacity:
+            self._store[flow] = path
+            return False, False
+
+        victim_flow = next(iter(self._store))
+        if self._sketch.estimate(flow) > self._sketch.estimate(victim_flow):
+            self._store.popitem(last=False)
+            self._store[flow] = path
+            return False, True
+
+        # Candidate is bypassed (not admitted), cache state unchanged.
+        return False, False
+
+
+class _TinyCacheTable:
+    """TinyCache-style fingerprint table with per-set bounded storage."""
+
+    def __init__(self, set_count, set_capacity, duplicate_cap, fingerprint_bits=16, seed=0):
+        if set_count <= 0:
+            raise ValueError("set_count must be > 0")
+        if set_capacity <= 0:
+            raise ValueError("set_capacity must be > 0")
+        if duplicate_cap <= 0:
+            raise ValueError("duplicate_cap must be > 0")
+        if fingerprint_bits <= 0:
+            raise ValueError("fingerprint_bits must be > 0")
+        self.set_count = set_count
+        self.set_capacity = set_capacity
+        self.duplicate_cap = duplicate_cap
+        self.fingerprint_bits = fingerprint_bits
+        self._mask = (1 << fingerprint_bits) - 1
+        self._rng = random.Random(seed)
+        self._sets = [[] for _ in range(set_count)]
+        self._ops = 0
+        self._sample_size = set_count * set_capacity
+
+    def _fingerprint(self, key):
+        digest = hashlib.blake2b(repr(key).encode("utf-8", errors="ignore"), digest_size=8, person=b"tinycach").digest()
+        return int.from_bytes(digest, "little") & self._mask
+
+    def _set_index(self, key):
+        digest = hashlib.blake2b(repr(key).encode("utf-8", errors="ignore"), digest_size=8, person=b"tinycache").digest()
+        return int.from_bytes(digest, "little") % self.set_count
+
+    def _bucket_count(self, bucket, fingerprint):
+        return sum(1 for item in bucket if item == fingerprint)
+
+    def observe(self, key):
+        fingerprint = self._fingerprint(key)
+        set_idx = self._set_index(key)
+        bucket = self._sets[set_idx]
+        duplicate_count = self._bucket_count(bucket, fingerprint)
+
+        if duplicate_count < self.duplicate_cap:
+            if len(bucket) >= self.set_capacity:
+                victim_idx = self._rng.randrange(len(bucket))
+                bucket.pop(victim_idx)
+            bucket.append(fingerprint)
+
+        self._ops += 1
+        if self._ops >= self._sample_size:
+            self._ops = 0
+            self._decay()
+
+    def _decay(self):
+        for idx, bucket in enumerate(self._sets):
+            if not bucket:
+                continue
+            keep = []
+            for fingerprint in bucket:
+                if self._rng.random() < 0.5:
+                    keep.append(fingerprint)
+            self._sets[idx] = keep
+
+    def estimate(self, key):
+        fingerprint = self._fingerprint(key)
+        bucket = self._sets[self._set_index(key)]
+        return self._bucket_count(bucket, fingerprint)
+
+
+class TinyCacheLRU:
+    """
+    LRU eviction with a TinyCache admission filter.
+
+    TinyCache keeps a table of recent fingerprints and estimates frequency by
+    counting matching fingerprints in the fingerprint's set. When the table is
+    full, it evicts a random fingerprint from the same set as the new item.
+    If the estimated frequency of the candidate is at least the victim's, the
+    candidate is admitted and the LRU victim is displaced; otherwise it is
+    bypassed.
+    """
+    name = "TinyCacheLRU"
+
+    def __init__(self, capacity, sample_multiplier=8, set_count=None, duplicate_cap=None, fingerprint_bits=16):
+        if capacity <= 0:
+            raise ValueError("capacity must be > 0")
+        if sample_multiplier <= 0:
+            raise ValueError("sample_multiplier must be > 0")
+        self.capacity = capacity
+        self._store = OrderedDict()  # flow_id -> last_path
+        self._set_count = set_count if set_count is not None else max(1, capacity)
+        self._set_capacity = max(1, sample_multiplier)
+        self._duplicate_cap = duplicate_cap if duplicate_cap is not None else max(1, self._set_capacity // 2)
+        self._table = _TinyCacheTable(
+            set_count=self._set_count,
+            set_capacity=self._set_capacity,
+            duplicate_cap=self._duplicate_cap,
+            fingerprint_bits=fingerprint_bits,
+        )
+
+    def lookup_and_update(self, flow, path, ts=0):
+        self._table.observe(flow)
+
+        if flow in self._store:
+            old = self._store[flow]
+            self._store.move_to_end(flow)
+            self._store[flow] = path
+            return (old == path), False
+
+        if len(self._store) < self.capacity:
+            self._store[flow] = path
+            return False, False
+
+        victim_flow = next(iter(self._store))
+        if self._table.estimate(flow) >= self._table.estimate(victim_flow):
+            self._store.popitem(last=False)
+            self._store[flow] = path
+            return False, True
+
+        return False, False
+
+
+class CacheINTFreshnessLRU:
+    """
+    Cache-INT inspired freshness cache.
+
+    Adapts Cache-INT's core ideas to flow/path caching:
+      - Classifies entries into dynamic (time-variant) vs static.
+      - Dynamic entries use freshness invalidation (dynamic_ttl_ps).
+      - Static entries do not expire by TTL.
+      - On insert under pressure, evicts the least-fresh dynamic entry first.
+      - Uses path hash checks to detect content changes and reset to dynamic.
+    """
+    name = "CacheINTFreshnessLRU"
+
+    def __init__(self, capacity, dynamic_ttl_ps=500_000_000, stable_hit_threshold=3):
+        if capacity <= 0:
+            raise ValueError("capacity must be > 0")
+        if dynamic_ttl_ps <= 0:
+            raise ValueError("dynamic_ttl_ps must be > 0")
+        if stable_hit_threshold <= 0:
+            raise ValueError("stable_hit_threshold must be > 0")
+        self.capacity = capacity
+        self.dynamic_ttl_ps = dynamic_ttl_ps
+        self.stable_hit_threshold = stable_hit_threshold
+        # flow -> dict(path, path_hash, last_update_ts, stable_hits, is_static)
+        self._store = OrderedDict()
+
+    def _path_hash(self, path):
+        raw = repr(path).encode("ascii", errors="ignore")
+        digest = hashlib.blake2b(raw, digest_size=8, person=b"cintpath").digest()
+        return int.from_bytes(digest, "little")
+
+    def _evict_one(self):
+        victim = None
+        victim_ts = None
+        for flow, item in self._store.items():
+            if item["is_static"]:
+                continue
+            ts = item["last_update_ts"]
+            if victim is None or ts < victim_ts:
+                victim = flow
+                victim_ts = ts
+
+        if victim is None:
+            self._store.popitem(last=False)
+            return
+        del self._store[victim]
+
+    def lookup_and_update(self, flow, path, ts=0):
+        evicted = False
+        new_hash = self._path_hash(path)
+
+        if flow in self._store:
+            item = self._store[flow]
+            self._store.move_to_end(flow)
+            same_path = (item["path_hash"] == new_hash and item["path"] == path)
+
+            if same_path:
+                item["stable_hits"] = min(item["stable_hits"] + 1, self.stable_hit_threshold)
+                if item["stable_hits"] >= self.stable_hit_threshold:
+                    item["is_static"] = True
+
+                if item["is_static"]:
+                    item["last_update_ts"] = ts
+                    self._store[flow] = item
+                    return True, False
+
+                if (ts - item["last_update_ts"]) < self.dynamic_ttl_ps:
+                    item["last_update_ts"] = ts
+                    self._store[flow] = item
+                    return True, False
+
+                # Dynamic entry expired by freshness TTL.
+                item["last_update_ts"] = ts
+                self._store[flow] = item
+                return False, False
+
+            # Change detected: refresh content and demote to dynamic class.
+            item["path"] = path
+            item["path_hash"] = new_hash
+            item["last_update_ts"] = ts
+            item["stable_hits"] = 0
+            item["is_static"] = False
+            self._store[flow] = item
+            return False, False
+
+        if len(self._store) >= self.capacity:
+            self._evict_one()
+            evicted = True
+
+        self._store[flow] = {
+            "path": path,
+            "path_hash": new_hash,
+            "last_update_ts": ts,
+            "stable_hits": 0,
+            "is_static": False,
+        }
+        return False, evicted
+
+
 class SegmentedLRU:
     """
     2-segment LRU (SLRU) cache.  Total N slots split into:
@@ -1155,13 +1664,32 @@ class SegmentedLRU:
 # Simulator
 # ---------------------------------------------------------------------------
 
-def simulate(records, cache, oracle=None) -> CacheResult:
+def simulate(records, cache, oracle=None, use_fast=False) -> CacheResult:
     """
     Replay records through cache.  If oracle supplied, classify each miss as
     necessary or redundant.  If oracle is None, every miss counts as necessary
     (use this only for unbounded caches that are their own oracle).
     """
     result = CacheResult(cache_name=cache.name, capacity=cache.capacity)
+
+    if use_fast and _simulate_records_fast is not None:
+        (
+            total,
+            hits,
+            necessary_forwards,
+            new_route_forwards,
+            route_change_forwards,
+            redundant_forwards,
+            evictions,
+        ) = _simulate_records_fast(records, cache)
+        result.total = total
+        result.hits = hits
+        result.necessary_forwards = necessary_forwards
+        result.new_route_forwards = new_route_forwards
+        result.route_change_forwards = route_change_forwards
+        result.redundant_forwards = redundant_forwards
+        result.evictions = evictions
+        return result
     # Collector-side oracle view: flow -> set of previously forwarded paths.
     collector_seen_paths = {}
 
@@ -1196,17 +1724,17 @@ def simulate(records, cache, oracle=None) -> CacheResult:
     return result
 
 
-def run_oracle_and_cache(records_list, cache_factory, oracle_factory=None):
+def run_oracle_and_cache(records_list, cache_factory, oracle_factory=None, use_fast=False):
     """
     Run oracle and a bounded cache over the same record list.
-    oracle_factory defaults to InfiniteLastPath.
+    oracle_factory defaults to Infinite.
     Returns CacheResult.
     """
     if oracle_factory is None:
         oracle_factory = InfiniteLastPath
     oracle = oracle_factory()
     cache  = cache_factory()
-    return simulate(records_list, cache, oracle)
+    return simulate(records_list, cache, oracle, use_fast=use_fast)
 
 
 # ---------------------------------------------------------------------------
@@ -1216,7 +1744,7 @@ def run_oracle_and_cache(records_list, cache_factory, oracle_factory=None):
 SWEEP_SIZES = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
 
 
-def sweep(records):
+def sweep(records, use_fast=False):
     """Run all cache policies across SWEEP_SIZES, return list of CacheResult."""
     results = []
 
@@ -1233,27 +1761,26 @@ def sweep(records):
     }
 
     for size in SWEEP_SIZES:
-        # --- Recency vs frequency vs domain-aware eviction ---
         for factory in [
             lambda s=size: LRULastPath(s),
+            lambda s=size: FIFOLastPath(s),
             lambda s=size: LFULastPath(s),
-            lambda s=size: VolatilityAwareLRU(s),
+            lambda s=size: TinyLFULRU(s),
+            lambda s=size: TinyCacheLRU(s),
             lambda s=size: AdmissionFilterLRU(s),
+            lambda s=size: PendingAdmissionLRU(s),
+            lambda s=size: PITCollapsedLRU(s),
             lambda s=size: AdaptiveAdmissionLRU(s),
             lambda s=size: OnlineAdaptiveAdmissionLRU(s),
-            lambda s=size: SegmentedLRU(s),
             lambda s=size: TimingBloomLRU(s),
-            lambda s=size: TwoFilterOHWLRU(s),
             lambda s=size: FreshnessInvalidationLRU(s),
-            lambda s=size: DualFreshnessLRU(s),
-            lambda s=size: OnlineAdaptiveDualTTL(s),
+            lambda s=size: CacheINTFreshnessLRU(s),
+            lambda s=size: FlowLifetimeAdaptiveTTL(s),
         ]:
-            r = run_oracle_and_cache(records, factory)
-            results.append(r)
+            results.append(run_oracle_and_cache(records, factory, use_fast=use_fast))
 
-        # --- TTL sweep ---
         for label, ttl_ps in TTL_SWEEP.items():
-            r = run_oracle_and_cache(records, lambda s=size, t=ttl_ps: LRULastPathTTL(s, t))
+            r = run_oracle_and_cache(records, lambda s=size, t=ttl_ps: LRULastPathTTL(s, t), use_fast=use_fast)
             r.cache_name = f"LRUTtl({label})"
             results.append(r)
 
@@ -1310,10 +1837,10 @@ if __name__ == '__main__':
     ap.add_argument('logfile', nargs='?', default='dash_logs/log2.txt')
     ap.add_argument('--sweep', action='store_true',
                     help='Sweep all cache sizes and policies')
-    ap.add_argument('--cache', choices=['lru', 'lfu', 'volatility', 'admission', 'adaptive',
+    ap.add_argument('--cache', choices=['lru', 'lfu', 'admission', 'pending_admission', 'pit', 'adaptive',
                                           'online_adaptive',
-                                          'slru', 'bloom', 'ohw2',
-                                          'fifo', 'lru_ttl', 'f_inv', 'dual_fresh', 'online_dual_ttl', 'infinite_lp'],
+                                          'bloom',
+                                          'fifo', 'tiny_lfu', 'tiny_cache', 'lru_ttl', 'f_inv', 'cache_int', 'life_ttl', 'infinite_lp'],
                     default='lru', help='Cache policy for single run')
     ap.add_argument('--size', type=int, default=64,
                     help='Cache capacity (number of flow slots) for single run')
@@ -1326,17 +1853,31 @@ if __name__ == '__main__':
     ap.add_argument('--bloom-epoch-records', type=int, default=256,
                     help='Rotate Bloom windows every N INT records (short epochs are stricter)')
     ap.add_argument('--ttl-ms', type=float, default=10.0,
-                    help='Keep-alive TTL in milliseconds for LRULastPathTTL (default 10ms)')
+                    help='Keep-alive TTL in milliseconds for LRUTTL (default 10ms)')
     ap.add_argument('--fresh-ttl-ms', type=float, default=2.0,
                     help='Freshness TTL in milliseconds for FreshnessInvalidationLRU (default 2ms)')
     ap.add_argument('--dual-dyn-ttl-ms', type=float, default=0.5,
                     help='Dynamic-class TTL in milliseconds for DualFreshnessLRU (default 0.5ms)')
-    ap.add_argument('--dual-static-ttl-ms', type=float, default=10.0,
-                    help='Static-class TTL in milliseconds for DualFreshnessLRU (default 10ms)')
     ap.add_argument('--dual-stable-hits', type=int, default=3,
-                    help='Stable hits needed to promote flow to static class in DualFreshnessLRU')
+                    help='Stable hits needed to promote flow to static class in CacheINTFreshnessLRU')
+    ap.add_argument('--pit-download-us', type=float, default=2.0,
+                    help='PIT download delay in microseconds for PITCollapsedLRU (default 2us)')
+    ap.add_argument('--fast', action='store_true',
+                    help='Use optional Cython fast-path if available')
+    ap.add_argument('--life-min-ttl-ms', type=float, default=0.1,
+                    help='Minimum per-flow TTL in milliseconds for FlowLifetimeAdaptiveTTL (default 0.1ms)')
+    ap.add_argument('--life-max-ttl-ms', type=float, default=20.0,
+                    help='Maximum per-flow TTL in milliseconds for FlowLifetimeAdaptiveTTL (default 20ms)')
+    ap.add_argument('--life-base-ttl-ms', type=float, default=0.5,
+                    help='Bootstrap TTL in milliseconds before flow lifetime is learned (default 0.5ms)')
+    ap.add_argument('--life-ema-alpha', type=float, default=0.2,
+                    help='EMA alpha for per-flow gap learning in FlowLifetimeAdaptiveTTL (default 0.2)')
+    ap.add_argument('--life-ttl-multiplier', type=float, default=4.0,
+                    help='Multiplier mapping learned inter-arrival gap to TTL in FlowLifetimeAdaptiveTTL (default 4.0)')
     ap.add_argument('--csv', metavar='FILE',
                     help='Write sweep results to CSV file')
+    ap.add_argument('--quiet-table', action='store_true',
+                    help='Suppress printing the final sweep table to stdout')
     args = ap.parse_args()
 
     print(f"Parsing {args.logfile} ...", file=sys.stderr)
@@ -1344,34 +1885,51 @@ if __name__ == '__main__':
     print(f"Loaded {len(records):,} INT records", file=sys.stderr)
 
     if args.sweep:
-        results = sweep(records)
-        print_results(results)
+        results = sweep(records, use_fast=args.fast)
+        if not args.quiet_table:
+            print_results(results)
         if args.csv:
             write_csv(results, args.csv)
     else:
         ttl_ps = int(args.ttl_ms * 1_000_000_000)
         fresh_ttl_ps = int(args.fresh_ttl_ms * 1_000_000_000)
         dual_dyn_ttl_ps = int(args.dual_dyn_ttl_ms * 1_000_000_000)
-        dual_static_ttl_ps = int(args.dual_static_ttl_ms * 1_000_000_000)
+        pit_download_ps = int(args.pit_download_us * 1_000_000)
+        life_min_ttl_ps = int(args.life_min_ttl_ms * 1_000_000_000)
+        life_max_ttl_ps = int(args.life_max_ttl_ms * 1_000_000_000)
+        life_base_ttl_ps = int(args.life_base_ttl_ms * 1_000_000_000)
         cache_map = {
             'lru':          lambda: LRULastPath(args.size),
             'lfu':          lambda: LFULastPath(args.size),
-            'volatility':   lambda: VolatilityAwareLRU(args.size),
-            'admission':    lambda: AdmissionFilterLRU(args.size, pending_reset_every=args.pending_reset_every),
+            'admission':    lambda: AdmissionFilterLRU(
+                args.size,
+                pending_reset_every=args.bloom_epoch_records,
+                bloom_bits=args.bloom_bits,
+                bloom_hashes=args.bloom_hashes,
+            ),
+            'pending_admission': lambda: PendingAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
+            'pit':          lambda: PITCollapsedLRU(args.size, download_delay_ps=pit_download_ps),
             'adaptive':     lambda: AdaptiveAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
             'online_adaptive': lambda: OnlineAdaptiveAdmissionLRU(args.size),
-            'slru':         lambda: SegmentedLRU(args.size),
             'bloom':        lambda: TimingBloomLRU(args.size, args.bloom_bits, args.bloom_hashes, args.bloom_epoch_records),
-            'ohw2':         lambda: TwoFilterOHWLRU(args.size, args.bloom_bits, args.bloom_hashes, args.bloom_epoch_records),
             'fifo':         lambda: FIFOLastPath(args.size),
+            'tiny_lfu':     lambda: TinyLFULRU(args.size),
+            'tiny_cache':   lambda: TinyCacheLRU(args.size),
             'lru_ttl':      lambda: LRULastPathTTL(args.size, ttl_ps),
             'f_inv':        lambda: FreshnessInvalidationLRU(args.size, fresh_ttl_ps),
-            'dual_fresh':   lambda: DualFreshnessLRU(args.size, dual_dyn_ttl_ps, dual_static_ttl_ps, args.dual_stable_hits),
-            'online_dual_ttl': lambda: OnlineAdaptiveDualTTL(args.size, dual_dyn_ttl_ps, dual_static_ttl_ps, stable_hit_threshold=args.dual_stable_hits),
+            'cache_int':    lambda: CacheINTFreshnessLRU(args.size, dual_dyn_ttl_ps, args.dual_stable_hits),
+            'life_ttl':     lambda: FlowLifetimeAdaptiveTTL(
+                args.size,
+                min_ttl_ps=life_min_ttl_ps,
+                max_ttl_ps=life_max_ttl_ps,
+                base_ttl_ps=life_base_ttl_ps,
+                ema_alpha=args.life_ema_alpha,
+                ttl_multiplier=args.life_ttl_multiplier,
+            ),
             'infinite_lp':  lambda: InfiniteLastPath(),
         }
         unbounded = args.cache == 'infinite_lp'
         cache = cache_map[args.cache]()
         oracle = None if unbounded else InfiniteLastPath()
-        result = simulate(records, cache, oracle)
+        result = simulate(records, cache, oracle, use_fast=args.fast)
         print(result)

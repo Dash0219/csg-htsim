@@ -4,25 +4,26 @@ set -euo pipefail
 print_usage() {
   cat <<'EOF'
 Usage:
-  bash dash_scripts/run_plot_flow_distribution_imc.sh [options]
+  bash dash_scripts/run_plot_flow_lifetime_imc_top8.sh [options]
 
 Options:
   -d, --dataset NAME         Limit plotting to one IMC dataset (univ1 or univ2)
   -o, --out-base DIR         Output base directory (default: dash_results/imc)
-  --prefix NAME          Output filename prefix base (default: sink_flow_size)
-      --cols N               Subplot grid columns (default: 4)
-      --max-sinks N          Maximum sink files to include per dataset (0 means all)
-      --sort-by MODE         rows | flows | name (default: rows)
+  -p, --prefix NAME          Output filename prefix (default: flow_lifetime_imc_top8)
+      --max-records N        Limit records parsed by plotter (default: 2000000, 0 means all)
+      --bins N               Histogram bin count (default: 50)
   -h, --help                 Show this help
+
+Environment variables:
+  MAX_RECORDS                Backward-compatible fallback for --max-records
 EOF
 }
 
 DATASET="${DATASET:-}"
 OUT_BASE="${OUT_BASE:-dash_results/imc}"
-PREFIX="${PREFIX:-sink_flow_size}"
-COLS="${COLS:-4}"
-MAX_SINKS="${MAX_SINKS:-0}"
-SORT_BY="${SORT_BY:-rows}"
+PREFIX="${PREFIX:-flow_lifetime_imc_top8}"
+MAX_RECORDS="${MAX_RECORDS:-2000000}"
+BINS="${BINS:-50}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,24 +37,19 @@ while [[ $# -gt 0 ]]; do
       OUT_BASE="$2"
       shift 2
       ;;
-    --prefix)
+    -p|--prefix)
       [[ $# -ge 2 ]] || { echo "ERROR: --prefix requires a value" >&2; exit 1; }
       PREFIX="$2"
       shift 2
       ;;
-    --cols)
-      [[ $# -ge 2 ]] || { echo "ERROR: --cols requires a value" >&2; exit 1; }
-      COLS="$2"
+    --max-records)
+      [[ $# -ge 2 ]] || { echo "ERROR: --max-records requires a value" >&2; exit 1; }
+      MAX_RECORDS="$2"
       shift 2
       ;;
-    --max-sinks)
-      [[ $# -ge 2 ]] || { echo "ERROR: --max-sinks requires a value" >&2; exit 1; }
-      MAX_SINKS="$2"
-      shift 2
-      ;;
-    --sort-by)
-      [[ $# -ge 2 ]] || { echo "ERROR: --sort-by requires a value" >&2; exit 1; }
-      SORT_BY="$2"
+    --bins)
+      [[ $# -ge 2 ]] || { echo "ERROR: --bins requires a value" >&2; exit 1; }
+      BINS="$2"
       shift 2
       ;;
     -h|--help)
@@ -88,18 +84,19 @@ for ds in univ1 univ2; do
     continue
   fi
 
-  out_dir="$OUT_BASE/$ds/flow_size/plots"
+  out_dir="$OUT_BASE/$ds/flow_lifetime/plots"
   mkdir -p "$out_dir"
 
-  echo "== plotting IMC flow size for $ds =="
-  python3 dash_scripts/plot_sink_flow_distributions.py \
-    --split-dir "$split_dir" \
-    --out-dir "$out_dir" \
-    --prefix "${PREFIX}_${ds}_top8" \
-    --cols "$COLS" \
-    --max-sinks "$MAX_SINKS" \
-    --sort-by "$SORT_BY"
-  count=$((count + 1))
+  for sink_file in "$split_dir"/*.txt "$split_dir"/*.log; do
+    [[ -f "$sink_file" ]] || continue
+    python3 dash_scripts/plot_flow_lifetimes.py \
+      "$sink_file" \
+      --out-dir "$out_dir" \
+      --prefix "${PREFIX}_${ds}" \
+      --max-records "$MAX_RECORDS" \
+      --bins "$BINS"
+    count=$((count + 1))
+  done
 done
 
-echo "Done. Plotted flow sizes for $count IMC dataset(s) into $OUT_BASE/{univ1,univ2}/flow_size/plots"
+echo "Done. Plotted flow lifetimes for $count IMC top-8 split files into $OUT_BASE/{univ1,univ2}/flow_lifetime/plots"

@@ -227,14 +227,14 @@ def main() -> None:
     # 3) Plot sink-grid distributions
     if not args.skip_plots:
         split_name = split_dir.name
-        plot_prefix = f"sink_flow_distribution_{split_name}"
+        plot_prefix = f"sink_flow_size_{split_name}"
         cmd = [
             py,
             str(scripts_dir / "plot_sink_flow_distributions.py"),
             "--split-dir",
             str(split_dir),
             "--out-dir",
-            str(Path("dash_results") / "imc" / args.dataset / "flow_distribution" / "plots"),
+            str(Path("dash_results") / "imc" / args.dataset / "flow_size" / "plots"),
             "--prefix",
             plot_prefix,
             "--cols",

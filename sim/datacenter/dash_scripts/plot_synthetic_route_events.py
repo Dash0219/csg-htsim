@@ -70,21 +70,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def default_synthetic_csvs() -> List[Path]:
-    names = [
-        "incast_mono",
-        "a2a_mono",
-        "incast_bimodal",
-        "a2a_bimodal",
-        "incast_pareto",
-        "a2a_pareto",
-        "incast_pareto_heavy",
-        "a2a_pareto_heavy",
-        "incast_lognormal_skewed",
-        "a2a_lognormal_skewed",
-        "incast_exponential_skewed",
-        "a2a_exponential_skewed",
-    ]
-    return [Path(f"dash_results/synthetic/cache_sim/route_changes/results_synthetic_{name}.csv") for name in names]
+    root = Path("dash_results/synthetic/cache_sim/route_changes")
+    return sorted(root.glob("results_synthetic_*.csv"))
 
 
 def infer_workload_name(path: Path) -> str:

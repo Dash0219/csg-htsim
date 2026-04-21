@@ -8,7 +8,6 @@ Usage:
 
 Options:
   -d, --dataset NAME        Only plot one synthetic dataset stem for synthetic CSVs
-  -l, --low-temp-locality   Only plot low-temp-locality synthetic datasets
       --max-concurrency N   Optional cache-capacity marker for max concurrent flows
       --unique-flows N      Optional cache-capacity marker for unique flows
       --switch-budget N     Optional practical switch cache-size marker
@@ -41,10 +40,6 @@ while [[ $# -gt 0 ]]; do
       fi
       DATASET="$2"
       shift 2
-      ;;
-    -l|--low-temp-locality)
-      LOW_TEMP_LOCALITY=1
-      shift
       ;;
     --max-concurrency)
       if [[ $# -lt 2 ]]; then
