@@ -14,6 +14,9 @@
 #   pareto:<min_size>:<alpha>:<max_size>
 #   lognormal:<mu>:<sigma>:<scale>:<max_size>
 #   exponential:<mean_size>:<max_size>
+#   heavytail:<sigma>:<min_size>:<max_size>
+#     lognormal(mu=0, sigma) scaled so median ~ min_size; sigma controls concentration.
+#     Higher sigma -> fewer flows carry most packets (more like real datacenter traffic).
 
 import os
 import sys
@@ -89,7 +92,27 @@ def parse_size_dist(spec, default_flowsize):
             "max_size": max_size,
         })
 
-    raise ValueError("Unknown size_dist. Supported: fixed, bimodal, pareto, lognormal, exponential")
+    if kind == "heavytail":
+        # heavytail:<sigma>:<min_size>:<max_size>
+        # Lognormal(mu=0, sigma) * min_size, clipped to [min_size, max_size].
+        # sigma is the concentration parameter: higher -> fewer flows carry most bytes.
+        # Typical real-world datacenter traffic: sigma ~ 1.5 to 2.5.
+        if len(parts) != 4:
+            raise ValueError("heavytail format: heavytail:<sigma>:<min_size>:<max_size>")
+        sigma = float(parts[1])
+        min_size = int(parts[2])
+        max_size = int(parts[3])
+        if sigma <= 0.0:
+            raise ValueError("heavytail sigma must be > 0")
+        if min_size <= 0 or max_size <= 0 or max_size < min_size:
+            raise ValueError("heavytail bounds must satisfy 0 < min_size <= max_size")
+        return ("heavytail", {
+            "sigma": sigma,
+            "min_size": min_size,
+            "max_size": max_size,
+        })
+
+    raise ValueError("Unknown size_dist. Supported: fixed, bimodal, pareto, lognormal, exponential, heavytail")
 
 
 def sample_flow_size(kind, params):
@@ -119,6 +142,13 @@ def sample_flow_size(kind, params):
             x = 1
         return x
 
+    if kind == "heavytail":
+        # Lognormal with mu=0, scaled by min_size so median == min_size.
+        # sigma controls concentration: higher sigma -> heavier tail.
+        x = int(params["min_size"] * lognormvariate(0.0, params["sigma"]))
+        x = max(params["min_size"], min(x, params["max_size"]))
+        return x
+
     # Exponential with truncation at max_size
     x = int(expovariate(1.0 / params["mean_size"]))
     if x > params["max_size"]:
@@ -136,6 +166,7 @@ if len(sys.argv) not in (7, 8):
     print("    pareto:32000:1.3:20000000")
     print("    lognormal:0.0:1.2:1460:50000000")
     print("    exponential:200000:50000000")
+    print("    heavytail:1.5:9000:50000000   (sigma=1.5, median=9000B, max=50MB)")
     sys.exit()
 
 filename = sys.argv[1]

@@ -1,0 +1,21 @@
+[run]
+source = fyp/dash_scripts
+
+[report]
+exclude_lines =
+    # Standard pragmas
+    pragma: no cover
+
+    # CLI entry points — not library logic, not unit-testable without subprocess
+    if __name__ == .__main__.:
+
+    # argparse blocks that only run under __main__
+    def parse_args
+
+    # Optional compiled Cython fast-path — not present in the test environment
+    if use_fast and _simulate_records_fast is not None:
+    if fast_eligible:
+
+    # Fallback bare-module import — only triggers when package is not installed
+    except ModuleNotFoundError:
+    from cache_sim import

@@ -71,7 +71,20 @@ def parse_size_dist(spec, default_flowsize):
             },
         )
 
-    raise ValueError("Unknown size_dist. Supported: fixed, bimodal, pareto, lognormal, exponential")
+    if kind == "heavytail":
+        # heavytail:<sigma>:<min_size>:<max_size>
+        if len(parts) != 4:
+            raise ValueError("heavytail format: heavytail:<sigma>:<min_size>:<max_size>")
+        sigma = float(parts[1])
+        min_size = int(parts[2])
+        max_size = int(parts[3])
+        if sigma <= 0.0:
+            raise ValueError("heavytail sigma must be > 0")
+        if min_size <= 0 or max_size <= 0 or max_size < min_size:
+            raise ValueError("heavytail bounds must satisfy 0 < min_size <= max_size")
+        return ("heavytail", {"sigma": sigma, "min_size": min_size, "max_size": max_size})
+
+    raise ValueError("Unknown size_dist. Supported: fixed, bimodal, pareto, lognormal, exponential, heavytail")
 
 
 def sample_flow_size(kind, params):
@@ -85,6 +98,9 @@ def sample_flow_size(kind, params):
     if kind == "lognormal":
         x = int(params["scale"] * lognormvariate(params["mu"], params["sigma"]))
         return max(1, min(x, params["max_size"]))
+    if kind == "heavytail":
+        x = int(params["min_size"] * lognormvariate(0.0, params["sigma"]))
+        return max(params["min_size"], min(x, params["max_size"]))
     x = int(expovariate(1.0 / params["mean_size"]))
     return max(1, min(x, params["max_size"]))
 
