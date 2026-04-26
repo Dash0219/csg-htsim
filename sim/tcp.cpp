@@ -3,6 +3,7 @@
 #include "mtcp.h"
 #include "ecn.h"
 #include <iostream>
+#include <inttypes.h>
 
 #define KILL_THRESHOLD 5
 ////////////////////////////////////////////////////////////////
@@ -648,6 +649,23 @@ TcpSink::receivePacket(Packet& pkt) {
 
     int size = p->size(); // TODO: the following code assumes all packets are the same size
     pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_RCVDESTROY);
+
+    if (p->_int_hop > 0) {
+        static bool s_stderr_buffered = false;
+        if (!s_stderr_buffered) {
+            static char s_int_buf[1 << 22];
+            setvbuf(stderr, s_int_buf, _IOFBF, sizeof(s_int_buf));
+            s_stderr_buffered = true;
+        }
+        fprintf(stderr, "INT flow=%u seq=%" PRIu64 " hops=%u\n",
+                pkt.flow().flow_id(), (uint64_t)p->seqno(), p->_int_hop);
+        for (uint32_t h = 0; h < p->_int_hop; h++) {
+            const IntEntry& e = p->_int_info[h];
+            fprintf(stderr, "  [%u] sw=%u type=%u qs=%u ts=%" PRIu64 " txbytes=%" PRIu64 " pktid=%u\n",
+                    h, e._switchID, e._type, e._queuesize, e._ts, e._txbytes, e._packetid);
+        }
+    }
+
     p->free();
 
     _packets+= p->size();

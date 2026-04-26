@@ -8,7 +8,7 @@ Usage:
 
 Options:
   -d, --dataset NAME        Only analyze one dataset (repeatable)
-  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: ndp)
+  -p, --protocol NAME       Transport protocol: ndp or hpcc or tcp (default: ndp)
   -t, --top N               Top N flows to print per report (default: 20)
   -m, --max-records N       Max parsed records per logfile (default: 0 = all)
   -o, --out-dir DIR         Output directory (default: fyp/dash_results/synthetic/<protocol>/flow_stats)
@@ -76,7 +76,7 @@ is_supported_dataset_name() {
   if [[ "$core_name" =~ ^(incast|a2a)_mono_[0-9]+$ ]]; then
     return 0
   fi
-  if [[ "$core_name" =~ ^(incast|a2a)_mono_burst_[0-9]+$ ]]; then
+  if [[ "$core_name" =~ ^(incast|a2a)_heavytail_burst_[0-9]+$ ]]; then
     return 0
   fi
   if [[ "$core_name" =~ ^(incast|a2a)_pareto_(alpha|temp)_[0-9]+(p[0-9]+)?$ ]]; then
@@ -139,8 +139,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
-  echo "ERROR: --protocol must be ndp or hpcc" >&2
+if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" && "$PROTOCOL" != "tcp" ]]; then
+  echo "ERROR: --protocol must be ndp or hpcc or tcp" >&2
   exit 1
 fi
 if [[ "$LOW_TEMP" != "0" && "$LOW_TEMP" != "1" ]]; then

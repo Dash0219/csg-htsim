@@ -140,7 +140,7 @@ mono=()
 sigma=()
 
 for ds in "${all_ds[@]}"; do
-  if [[ "$ds" =~ ^(incast|a2a)_mono_burst_[0-9]+$ ]]; then
+  if [[ "$ds" =~ ^(incast|a2a)_heavytail_burst_[0-9]+$ ]]; then
     burst+=("$ds")
   elif [[ "$ds" =~ ^(incast|a2a)_pareto_alpha_[0-9]+(p[0-9]+)?$ ]]; then
     alpha+=("$ds")

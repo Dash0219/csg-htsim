@@ -8,7 +8,7 @@ Usage:
 
 Options:
   -d, --dataset NAME        Run one dataset name/pattern (example: a2a_pareto)
-  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: ndp)
+  -p, --protocol NAME       Transport protocol: ndp, hpcc, or tcp (default: ndp)
   --flow-size-sweep      Enable mono flow-size sweep datasets
   --no-flow-size-sweep   Disable mono flow-size sweep datasets
   --flow-size-values L   Comma-separated packet counts for sweep datasets
@@ -25,16 +25,16 @@ Accepted dataset names/patterns for --dataset:
     incast_exponential_skewed | a2a_exponential_skewed
   Sweep datasets:
     (incast|a2a)_mono_<N>
-    (incast|a2a)_mono_burst_<N>
+    (incast|a2a)_heavytail_burst_<N>
     (incast|a2a)_pareto_alpha_<A>        (A tokenized, e.g. 1p0, 1p5)
     (incast|a2a)_heavytail_temp_<N>
     (incast|a2a)_heavytail_sigma_<S>     (S tokenized, e.g. 1p0, 1p5, 2p0)
   Sweep shorthand:
-    a2a_mono_n / incast_mono_n                   (all mono_<N> flow-size sweep datasets for one topology)
-    a2a_mono_burst_n / incast_mono_burst_n       (all mono_burst_<N> sweep datasets for one topology)
-    a2a_pareto_alpha_n / incast_pareto_alpha_n   (all pareto_alpha_<A> sweep datasets for one topology)
-    a2a_heavytail_temp_n / incast_heavytail_temp_n (all heavytail_temp_<N> temporal-locality sweep datasets)
-    a2a_heavytail_sigma_n / incast_heavytail_sigma_n (all heavytail_sigma_<S> sweep datasets for one topology)
+    a2a_mono_n / incast_mono_n                         (all mono_<N> flow-size sweep datasets for one topology)
+    a2a_heavytail_burst_n / incast_heavytail_burst_n   (all heavytail_burst_<N> sweep datasets for one topology; NDP only)
+    a2a_pareto_alpha_n / incast_pareto_alpha_n         (all pareto_alpha_<A> sweep datasets for one topology)
+    a2a_heavytail_temp_n / incast_heavytail_temp_n     (all heavytail_temp_<N> temporal-locality sweep datasets)
+    a2a_heavytail_sigma_n / incast_heavytail_sigma_n   (all heavytail_sigma_<S> sweep datasets for one topology)
 
 Environment variables:
   PROTOCOL             Equivalent to --protocol (ndp/hpcc)
@@ -53,9 +53,12 @@ Environment variables:
   FLOW_SWEEP_END_US_A2A     Optional absolute A2A sim end time (us) for mono sweep
   FLOW_SWEEP_END_US_INCAST_BASE  Base incast end time (us) multiplied by packet count when absolute end is unset (default: 20000)
   FLOW_SWEEP_END_US_A2A_BASE     Base A2A end time (us) multiplied by packet count when absolute end is unset (default: 20000)
-  GENERATE_BURST_SWEEP  Enable/disable mono burstiness sweep datasets (1/0)
-  BURST_SWEEP_VALUES    Comma-separated ROUTE_PATH_BURST values for burst sweep (default: 8,16,32,64,128,256)
-  BURST_MONO_PACKETS    Fixed mono packet count used by burst sweep datasets (default: 1024)
+  GENERATE_BURST_SWEEP        Enable/disable heavytail burstiness sweep datasets (1/0; NDP only)
+  BURST_SWEEP_VALUES          Comma-separated ROUTE_PATH_BURST values for burst sweep (default: 8,16,32,64,128,256)
+  BURST_HEAVYTAIL_PACKETS     Fixed packet count per flow used by burst sweep datasets (default: 32)
+  BURST_HEAVYTAIL_SIGMA       Heavytail sigma for burst sweep distribution (default: 2.0)
+  BURST_BASE_EXTRA_START_US      Non-NDP fallback base start spread (us) scaled as 1/value for incast burst sweep
+  BURST_BASE_EXTRA_START_US_A2A  Non-NDP fallback base start spread (us) scaled as 1/value for A2A burst sweep
   BURST_BASE_EXTRA_START_US      Non-NDP fallback base start spread (us) scaled as 1/value for incast burst sweep
   BURST_BASE_EXTRA_START_US_A2A  Non-NDP fallback base start spread (us) scaled as 1/value for A2A burst sweep
   GENERATE_PARETO_SKEW_SWEEP     Enable/disable Pareto alpha skew sweep datasets (1/0)
@@ -94,8 +97,9 @@ SEED="${SEED:-}"
 GENERATE_FLOW_SIZE_SWEEP="${GENERATE_FLOW_SIZE_SWEEP:-}"
 FLOW_SIZE_SWEEP_VALUES="${FLOW_SIZE_SWEEP_VALUES:-1,2,4,8,16,32,64,128,256,512,1024,2048,4096}"
 GENERATE_BURST_SWEEP="${GENERATE_BURST_SWEEP:-}"
-BURST_SWEEP_VALUES="${BURST_SWEEP_VALUES:-8,16,32,64,128,256}"
-BURST_MONO_PACKETS="${BURST_MONO_PACKETS:-1024}"
+BURST_SWEEP_VALUES="${BURST_SWEEP_VALUES:-1,2,4,8,16,32,64,128,256}"
+BURST_HEAVYTAIL_PACKETS="${BURST_HEAVYTAIL_PACKETS:-32}"
+BURST_HEAVYTAIL_SIGMA="${BURST_HEAVYTAIL_SIGMA:-2.0}"
 GENERATE_PARETO_SKEW_SWEEP="${GENERATE_PARETO_SKEW_SWEEP:-1}"
 PARETO_ALPHA_SWEEP_VALUES="${PARETO_ALPHA_SWEEP_VALUES-1.0,1.5,2.0,2.5,3.0,3.5}"
 PARETO_SKEW_BASE_XM="${PARETO_SKEW_BASE_XM:-1}"
@@ -211,8 +215,8 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
-  echo "ERROR: --protocol must be ndp or hpcc" >&2
+if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" && "$PROTOCOL" != "tcp" ]]; then
+  echo "ERROR: --protocol must be ndp, hpcc, or tcp" >&2
   exit 1
 fi
 
@@ -242,8 +246,8 @@ END_US_INCAST="${END_US_INCAST:-1000000000}"
 END_US_A2A="${END_US_A2A:-1000}"
 if [[ -n "${ROUTE_STRAT:-}" ]]; then
   ROUTE_STRAT="$ROUTE_STRAT"
-elif [[ "$PROTOCOL" == "hpcc" ]]; then
-  # main_hpcc only supports single-path or ECMP-FIB modes.
+elif [[ "$PROTOCOL" == "hpcc" || "$PROTOCOL" == "tcp" ]]; then
+  # main_hpcc and main_tcp only support single-path or ECMP-FIB modes.
   ROUTE_STRAT="ecmp_host"
 else
   ROUTE_STRAT="perm"
@@ -505,8 +509,12 @@ if (( FLOW_SWEEP_PKT_BYTES <= 0 )); then
   echo "ERROR: FLOW_SWEEP_PKT_BYTES must be > 0" >&2
   exit 1
 fi
-if ! [[ "$BURST_MONO_PACKETS" =~ ^[0-9]+$ ]] || (( BURST_MONO_PACKETS <= 0 )); then
-  echo "ERROR: BURST_MONO_PACKETS must be a positive integer" >&2
+if ! [[ "$BURST_HEAVYTAIL_PACKETS" =~ ^[0-9]+$ ]] || (( BURST_HEAVYTAIL_PACKETS <= 0 )); then
+  echo "ERROR: BURST_HEAVYTAIL_PACKETS must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "$BURST_HEAVYTAIL_SIGMA" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "ERROR: BURST_HEAVYTAIL_SIGMA must be a positive number" >&2
   exit 1
 fi
 
@@ -517,6 +525,18 @@ if [[ "$PROTOCOL" == "hpcc" ]]; then
     *)
       echo "ERROR: ROUTE_STRAT=$ROUTE_STRAT is unsupported for hpcc." >&2
       echo "Use one of: single, ecmp_host, ecmp_ar, ecmp_host_ar, ecmp_rr" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ "$PROTOCOL" == "tcp" ]]; then
+  case "$ROUTE_STRAT" in
+    single|ecmp_host)
+      ;;
+    *)
+      echo "ERROR: ROUTE_STRAT=$ROUTE_STRAT is unsupported for tcp." >&2
+      echo "Use one of: single, ecmp_host" >&2
       exit 1
       ;;
   esac
@@ -550,9 +570,9 @@ if [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_mono_n$ ]]; then
   GENERATE_PARETO_SKEW_SWEEP=0
   GENERATE_HEAVYTAIL_SIGMA_SWEEP=0
   GENERATE_TEMPORAL_SWEEP=0
-elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_mono_burst_n$ ]]; then
-  DATASET_FAMILY_PREFIX="${BASH_REMATCH[1]}_mono_burst_"
-  DATASET_FAMILY_KIND="mono_burst"
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_burst_n$ ]]; then
+  DATASET_FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_burst_"
+  DATASET_FAMILY_KIND="heavytail_burst"
   DATASET=""
   GENERATE_FLOW_SIZE_SWEEP=0
   GENERATE_BURST_SWEEP=1
@@ -595,7 +615,7 @@ is_flow_size_sweep_dataset() {
 
 is_burst_sweep_dataset() {
   local name="$1"
-  [[ "$name" =~ ^(incast|a2a)_mono_burst_[0-9]+$ ]]
+  [[ "$name" =~ ^(incast|a2a)_heavytail_burst_[0-9]+$ ]]
 }
 
 is_temporal_sweep_dataset() {
@@ -615,7 +635,7 @@ is_heavytail_sigma_sweep_dataset() {
 
 is_valid_dataset() {
   local name="$1"
-  if [[ "$name" =~ ^(incast|a2a)_(mono|mono_burst|pareto_alpha|heavytail_temp|heavytail_sigma)_n$ ]]; then
+  if [[ "$name" =~ ^(incast|a2a)_(mono|heavytail_burst|pareto_alpha|heavytail_temp|heavytail_sigma)_n$ ]]; then
     return 0
   fi
   if is_flow_size_sweep_dataset "$name"; then
@@ -671,7 +691,7 @@ echo "PROTOCOL=$PROTOCOL SIM_BIN=$SIM_BIN"
 echo "DATASET=${DATASET:-<all>}"
 echo "GENERATE_FLOW_SIZE_SWEEP=$GENERATE_FLOW_SIZE_SWEEP FLOW_SIZE_SWEEP_VALUES=${FLOW_SIZE_SWEEP_LIST[*]:-<none>}"
 echo "GENERATE_BURST_SWEEP=$GENERATE_BURST_SWEEP BURST_SWEEP_VALUES=${BURST_SWEEP_LIST[*]:-<none>}"
-echo "BURST_MONO_PACKETS=$BURST_MONO_PACKETS"
+echo "BURST_HEAVYTAIL_PACKETS=$BURST_HEAVYTAIL_PACKETS BURST_HEAVYTAIL_SIGMA=$BURST_HEAVYTAIL_SIGMA"
 echo "GENERATE_PARETO_SKEW_SWEEP=$GENERATE_PARETO_SKEW_SWEEP PARETO_ALPHA_SWEEP_VALUES=${PARETO_ALPHA_SWEEP_LIST[*]:-<none>}"
 echo "PARETO_SKEW_BASE_XM=$PARETO_SKEW_BASE_XM PARETO_SKEW_MAX_SIZE=$PARETO_SKEW_MAX_SIZE"
 echo "SKEW_TARGET_TOTAL_BYTES_INCAST=$SKEW_TARGET_TOTAL_BYTES_INCAST SKEW_TARGET_TOTAL_BYTES_A2A=$SKEW_TARGET_TOTAL_BYTES_A2A"
@@ -779,8 +799,8 @@ should_process() {
         [[ "$name" =~ ^(incast|a2a)_mono_[0-9]+$ ]] && [[ "$name" == "$DATASET_FAMILY_PREFIX"* ]]
         return
         ;;
-      mono_burst)
-        [[ "$name" =~ ^(incast|a2a)_mono_burst_[0-9]+$ ]] && [[ "$name" == "$DATASET_FAMILY_PREFIX"* ]]
+      heavytail_burst)
+        [[ "$name" =~ ^(incast|a2a)_heavytail_burst_[0-9]+$ ]] && [[ "$name" == "$DATASET_FAMILY_PREFIX"* ]]
         return
         ;;
       pareto_alpha)
@@ -963,14 +983,18 @@ run_htsim() {
   proto_label="$(printf '%s' "$PROTOCOL" | tr '[:lower:]' '[:upper:]')"
   echo "== Running HTSIM ${proto_label} for ${name}; writing to ${out_file} =="
 
-  local cmd=("$SIM_BIN" -nodes "$NODES" -conns "$conns" -tm "$cm_file" -strat "$ROUTE_STRAT" -paths "$ROUTE_PATHS" -end "$end_us")
+  local cmd=("$SIM_BIN" -nodes "$NODES" -conns "$conns" -tm "$cm_file" -strat "$ROUTE_STRAT" -end "$end_us")
   if [[ "$PROTOCOL" == "ndp" ]]; then
+    cmd+=(-paths "$ROUTE_PATHS")
     local path_burst="$ROUTE_PATH_BURST"
     if [[ -n "$path_burst_override" ]]; then
       path_burst="$path_burst_override"
     fi
     cmd+=(-path_burst "$path_burst")
+  elif [[ "$PROTOCOL" == "hpcc" ]]; then
+    cmd+=(-paths "$ROUTE_PATHS")
   fi
+  # tcp uses switch-level ECMP; no -paths or -path_burst flags needed
 
   if "${cmd[@]}" 1> "$raw_file" 2> "$out_file"; then
     :
@@ -1078,51 +1102,32 @@ if [[ "$GENERATE_FLOW_SIZE_SWEEP" == "1" ]]; then
   done
 fi
 
+if [[ "$GENERATE_BURST_SWEEP" == "1" && "$PROTOCOL" != "ndp" ]]; then
+  echo "NOTE: burst sweep skipped for ${PROTOCOL} (path_burst is NDP-specific)"
+  GENERATE_BURST_SWEEP=0
+fi
+
 if [[ "$GENERATE_BURST_SWEEP" == "1" ]]; then
   echo
-  echo "== Running HTSIM for mono burstiness sweep datasets (fixed packets=${BURST_MONO_PACKETS}) =="
-  burst_flow_bytes=$((BURST_MONO_PACKETS * FLOW_SWEEP_PKT_BYTES))
+  echo "== Running HTSIM for heavytail burstiness sweep datasets (NDP only, sigma=${BURST_HEAVYTAIL_SIGMA}, fixed packets=${BURST_HEAVYTAIL_PACKETS}) =="
+  burst_flow_bytes=$((BURST_HEAVYTAIL_PACKETS * FLOW_SWEEP_PKT_BYTES))
+  burst_spec="heavytail:${BURST_HEAVYTAIL_SIGMA}:${burst_flow_bytes}:${HEAVYTAIL_MAX_SIZE}"
+  inc_cm="$CM_DIR/incast_heavytail_burst_base.cm"
+  a2a_cm="$CM_DIR/a2a_heavytail_burst_base.cm"
   for bs in "${BURST_SWEEP_LIST[@]}"; do
-    if [[ "$PROTOCOL" == "ndp" ]]; then
-      inc_cm="$CM_DIR/incast_mono_burst_base.cm"
-      a2a_cm="$CM_DIR/a2a_mono_burst_base.cm"
-
-      if should_process "incast_mono_burst_${bs}"; then
-        run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$burst_flow_bytes" "$EXTRA_START_US" "$SEED" fixed
-      fi
-      if should_process "a2a_mono_burst_${bs}"; then
-        if (( A2A_PARALLEL == 1 )); then
-          run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED"
-        else
-          run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED"
-        fi
-      fi
-
-      run_htsim "incast_mono_burst_${bs}" "$inc_cm" "$CONNS_INCAST" "$END_US_INCAST" "$bs"
-      run_htsim "a2a_mono_burst_${bs}" "$a2a_cm" "$A2A_CONNS" "$END_US_A2A" "$bs"
-      continue
+    if should_process "incast_heavytail_burst_${bs}"; then
+      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$burst_flow_bytes" "$EXTRA_START_US" "$SEED" "$burst_spec"
     fi
-
-    inc_cm="$CM_DIR/incast_mono_burst_${bs}.cm"
-    a2a_cm="$CM_DIR/a2a_mono_burst_${bs}.cm"
-    inc_extra=$((BURST_BASE_EXTRA_START_US / bs))
-    a2a_extra=$((BURST_BASE_EXTRA_START_US_A2A / bs))
-    if (( inc_extra < 1 )); then inc_extra=1; fi
-    if (( a2a_extra < 1 )); then a2a_extra=1; fi
-
-    if should_process "incast_mono_burst_${bs}"; then
-      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$burst_flow_bytes" "$inc_extra" "$SEED" fixed
-    fi
-    if should_process "a2a_mono_burst_${bs}"; then
+    if should_process "a2a_heavytail_burst_${bs}"; then
       if (( A2A_PARALLEL == 1 )); then
-        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$burst_flow_bytes" "$a2a_extra" "$SEED"
+        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED" "$burst_spec"
       else
-        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$burst_flow_bytes" "$a2a_extra" "$SEED"
+        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED" "$burst_spec"
       fi
     fi
 
-    run_htsim "incast_mono_burst_${bs}" "$inc_cm" "$CONNS_INCAST" "$END_US_INCAST"
-    run_htsim "a2a_mono_burst_${bs}" "$a2a_cm" "$A2A_CONNS" "$END_US_A2A"
+    run_htsim "incast_heavytail_burst_${bs}" "$inc_cm" "$CONNS_INCAST" "$END_US_INCAST" "$bs"
+    run_htsim "a2a_heavytail_burst_${bs}" "$a2a_cm" "$A2A_CONNS" "$END_US_A2A" "$bs"
   done
 fi
 

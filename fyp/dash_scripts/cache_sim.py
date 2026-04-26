@@ -198,27 +198,24 @@ def cache_slots_used(cache):
 # ---------------------------------------------------------------------------
 
 class InfiniteLastPath:
-    """Oracle / baseline A — never evicts and remembers all seen paths per flow."""
+    """Oracle — unbounded LRU: stores last_path per flow, never evicts."""
     name = "Infinite"
     capacity = float('inf')
 
     def __init__(self):
-        self._store = {}  # flow_id -> set(path tuples)
+        self._store = {}  # flow_id -> last_path tuple
 
     def lookup_and_update(self, flow, path, ts=0):
         """
         Returns (hit: bool, eviction: bool).
-        hit=True  → suppress (path already seen for this flow)
-        hit=False → forward (first observation of this flow/path pair)
+        hit=True  → suppress (path matches last forwarded path for this flow)
+        hit=False → forward (new flow or path changed)
         """
-        seen = self._store.get(flow)
-        if seen is None:
-            self._store[flow] = {path}
+        last = self._store.get(flow)
+        self._store[flow] = path
+        if last is None:
             return False, False
-        if path in seen:
-            return True, False
-        seen.add(path)
-        return False, False
+        return last == path, False
 
 
 class LRULastPath:

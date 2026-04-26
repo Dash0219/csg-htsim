@@ -3,6 +3,7 @@
 #include <math.h>
 #include "queue.h"
 #include "ndppacket.h"
+#include "tcppacket.h"
 #include "queue_lossless.h"
 
 simtime_picosec BaseQueue::_update_period = timeFromUs(0.1);
@@ -144,6 +145,23 @@ BaseQueue::add_int_to_packet(Packet& pkt) {
                 np->_int_info[np->_int_hop]._type     = 0;
             }
             np->_int_hop++;
+        }
+    } else if (pkt.type() == TCP) {
+        TcpPacket* tp = static_cast<TcpPacket*>(&pkt);
+        if (tp->_int_hop < NHOPS) {
+            tp->_int_info[tp->_int_hop]._queuesize = qs;
+            tp->_int_info[tp->_int_hop]._ts        = ts_now;
+            tp->_int_info[tp->_int_hop]._txbytes   = 0;
+            tp->_int_info[tp->_int_hop]._linkrate  = _bitrate;
+            tp->_int_info[tp->_int_hop]._packetid  = pkt.id();
+            if (_switch) {
+                tp->_int_info[tp->_int_hop]._switchID = _switch->getID();
+                tp->_int_info[tp->_int_hop]._type     = _switch->getType();
+            } else {
+                tp->_int_info[tp->_int_hop]._switchID = hop_hash;
+                tp->_int_info[tp->_int_hop]._type     = 0;
+            }
+            tp->_int_hop++;
         }
     }
 }

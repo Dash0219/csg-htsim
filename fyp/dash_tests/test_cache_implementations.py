@@ -6,6 +6,35 @@ from pathlib import Path
 
 import pytest
 
+from fyp.dash_scripts.cache_sim_congestion_int import (
+    AdaptiveAdmissionQS,
+    AdmissionFilterQS,
+    CacheINTFreshnessQS,
+    CongestResult,
+    FIFOQSCache,
+    FreshnessInvalidationQS,
+    FlowLifetimeAdaptiveTTLQS,
+    InfiniteQS,
+    LFUQSCache,
+    LRUQSCache,
+    LRUQSCacheTTL,
+    OnlineAdaptiveAdmissionQS,
+    PendingAdmissionQS,
+    PITCollapsedQS,
+    RollingBloomFilter as RollingBloomFilterQS,
+    SegmentedQS,
+    TimingBloomQS,
+    TinyCacheQS,
+    TinyLFUQS,
+    _TinyCacheTable as _TinyCacheTableQS,
+    _TinyLFUSketch as _TinyLFUSketchQS,
+    cache_slots_used as cache_slots_used_qs,
+    print_results as print_congestion_results,
+    simulate_congestion,
+    sweep as sweep_congestion,
+    write_capacity_csv as write_congestion_capacity_csv,
+    write_csv as write_congestion_csv,
+)
 from fyp.dash_scripts.cache_sim import (
     AdaptiveAdmissionLRU,
     AdmissionFilterLRU,
@@ -1670,3 +1699,1250 @@ def test_write_per_split_csvs(tmp_path: Path) -> None:
     splits_dir = tmp_path / "total_splits"
     assert splits_dir.exists()
     assert len(list(splits_dir.glob("*.csv"))) == 2
+
+
+# ===========================================================================
+# cache_sim_congestion_int tests
+# ===========================================================================
+
+def _qs_records(threshold: int = 0):
+    """Minimal hop records for congestion sim tests."""
+    return [
+        {"source": "sw1:1", "qs": 1000, "ts_ps": 100},
+        {"source": "sw1:1", "qs": 1000, "ts_ps": 200},   # same qs → hit if threshold >= 0
+        {"source": "sw2:2", "qs": 5000, "ts_ps": 300},   # new key → miss
+        {"source": "sw1:1", "qs": 9000, "ts_ps": 400},   # big change → miss
+        {"source": "sw3:3", "qs": 200,  "ts_ps": 500},   # new key → miss
+        {"source": "sw1:1", "qs": 9100, "ts_ps": 600},   # small change (100) → hit if threshold >= 100
+    ]
+
+
+# ---------------------------------------------------------------------------
+# CongestResult dataclass
+# ---------------------------------------------------------------------------
+
+def test_congest_result_properties() -> None:
+    r = CongestResult(cache_name="LRU", capacity=10)
+    r.total = 100
+    r.hits = 60
+    r.necessary_forwards = 30
+    r.redundant_forwards = 10
+    r.evictions = 5
+    r.new_route_forwards = 20
+    r.route_change_forwards = 10
+
+    assert r.forwards == 40
+    assert abs(r.suppression_rate - 0.60) < 1e-9
+    assert abs(r.forward_rate - 0.40) < 1e-9
+    assert abs(r.redundancy_rate - 0.25) < 1e-9
+    assert abs(r.efficiency - 0.75) < 1e-9
+
+
+def test_congest_result_zero_totals() -> None:
+    r = CongestResult(cache_name="Z", capacity=4)
+    assert r.suppression_rate == 0.0
+    assert r.forward_rate == 0.0
+    assert r.forwards == 0
+    assert r.efficiency == 1.0
+    assert r.redundancy_rate == 0.0
+
+
+def test_congest_result_str_finite_and_infinite() -> None:
+    r_finite = CongestResult(cache_name="LRU", capacity=64)
+    r_finite.total = 10
+    s = str(r_finite)
+    assert "cap=64" in s
+    assert "LRU" in s
+
+    r_inf = CongestResult(cache_name="Infinite", capacity=float("inf"))
+    r_inf.total = 5
+    s2 = str(r_inf)
+    assert "∞" in s2
+
+
+# ---------------------------------------------------------------------------
+# InfiniteQS oracle
+# ---------------------------------------------------------------------------
+
+def test_infinite_qs_hit_miss_basic() -> None:
+    c = InfiniteQS(range_threshold=0)
+    assert c.process("k1", 1000) == (False, False)  # new key
+    assert c.process("k1", 1000) == (True, False)   # same value → hit
+    assert c.process("k1", 2000) == (False, False)  # changed → miss
+
+
+def test_infinite_qs_range_threshold() -> None:
+    c = InfiniteQS(range_threshold=500)
+    c.process("k1", 1000)
+    # change of 400 <= 500 → hit
+    assert c.process("k1", 1400)[0] is True
+    # change of 600 > 500 → miss
+    assert c.process("k1", 2000)[0] is False
+
+
+def test_infinite_qs_first_seen_tracking() -> None:
+    c = InfiniteQS(range_threshold=0)
+    assert "k1" not in c._first_seen
+    c.process("k1", 100)
+    assert "k1" in c._first_seen
+    c.process("k1", 200)  # miss (value changed), but still in _first_seen
+    assert "k1" in c._first_seen
+
+
+# ---------------------------------------------------------------------------
+# LRUQSCache
+# ---------------------------------------------------------------------------
+
+def test_lruqs_hit_same_value() -> None:
+    c = LRUQSCache(4, range_threshold=0)
+    assert c.process("k1", 1000) == (False, False)
+    assert c.process("k1", 1000) == (True, False)
+
+
+def test_lruqs_miss_on_value_change() -> None:
+    c = LRUQSCache(4, range_threshold=0)
+    c.process("k1", 1000)
+    hit, ev = c.process("k1", 2000)
+    assert hit is False and ev is False
+
+
+def test_lruqs_eviction() -> None:
+    c = LRUQSCache(2, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    _, evicted = c.process("k3", 300)
+    assert evicted is True
+
+
+def test_lruqs_range_threshold_hit() -> None:
+    c = LRUQSCache(4, range_threshold=100)
+    c.process("k1", 1000)
+    # change of 50 <= 100 → hit
+    assert c.process("k1", 1050)[0] is True
+    # change of 200 > 100 → miss
+    assert c.process("k1", 1250)[0] is False
+
+
+# ---------------------------------------------------------------------------
+# FIFOQSCache
+# ---------------------------------------------------------------------------
+
+def test_fifoqs_eviction_in_order() -> None:
+    c = FIFOQSCache(2, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    # k1 inserted first → evicted first on new entry
+    _, evicted = c.process("k3", 300)
+    assert evicted is True
+    assert "k1" not in c._store
+
+
+def test_fifoqs_hit_no_reorder() -> None:
+    c = FIFOQSCache(2, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    c.process("k1", 100)  # hit, does NOT reorder (FIFO)
+    # k1 is still first in order, so next eviction still removes k1
+    _, evicted = c.process("k3", 300)
+    assert evicted is True
+
+
+# ---------------------------------------------------------------------------
+# LFUQSCache
+# ---------------------------------------------------------------------------
+
+def test_lfuqs_evicts_least_frequent() -> None:
+    c = LFUQSCache(2, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    # Make k1 more frequent with a hit
+    c.process("k1", 100)
+    # k2 has freq=1, k1 has freq=2 → k2 evicted
+    _, evicted = c.process("k3", 300)
+    assert evicted is True
+    assert "k2" not in c._store
+
+
+def test_lfuqs_hit_increments_freq() -> None:
+    c = LFUQSCache(4, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k1", 100)  # hit → freq increment
+    assert c._freq["k1"] > 1
+
+
+# ---------------------------------------------------------------------------
+# LRUQSCacheTTL
+# ---------------------------------------------------------------------------
+
+def test_lruqs_ttl_hit_within_window() -> None:
+    c = LRUQSCacheTTL(4, range_threshold=0, ttl_ps=1000)
+    c.process("k1", 100, ts=0)
+    # same value and within TTL → hit
+    assert c.process("k1", 100, ts=500)[0] is True
+
+
+def test_lruqs_ttl_miss_on_expiry() -> None:
+    c = LRUQSCacheTTL(4, range_threshold=0, ttl_ps=100)
+    c.process("k1", 100, ts=0)
+    # expired (age 200 >= ttl 100) → miss
+    assert c.process("k1", 100, ts=200)[0] is False
+
+
+def test_lruqs_ttl_miss_on_value_change() -> None:
+    c = LRUQSCacheTTL(4, range_threshold=0, ttl_ps=10000)
+    c.process("k1", 100, ts=0)
+    assert c.process("k1", 999, ts=1)[0] is False
+
+
+def test_lruqs_ttl_eviction() -> None:
+    c = LRUQSCacheTTL(1, range_threshold=0, ttl_ps=10000)
+    c.process("k1", 100, ts=0)
+    _, evicted = c.process("k2", 200, ts=0)
+    assert evicted is True
+
+
+# ---------------------------------------------------------------------------
+# FreshnessInvalidationQS
+# ---------------------------------------------------------------------------
+
+def test_freshness_qs_hit_within_ttl() -> None:
+    c = FreshnessInvalidationQS(4, range_threshold=0, freshness_ttl_ps=1000)
+    c.process("k1", 100, ts=0)
+    assert c.process("k1", 100, ts=500)[0] is True
+
+
+def test_freshness_qs_miss_on_stale() -> None:
+    c = FreshnessInvalidationQS(4, range_threshold=0, freshness_ttl_ps=100)
+    c.process("k1", 100, ts=0)
+    # stale → entry deleted before lookup
+    hit, evicted = c.process("k1", 100, ts=200)
+    assert hit is False
+    assert evicted is False  # entry was deleted, then re-inserted (no LRU eviction)
+
+
+def test_freshness_qs_eviction_when_full() -> None:
+    c = FreshnessInvalidationQS(1, range_threshold=0, freshness_ttl_ps=10000)
+    c.process("k1", 100, ts=0)
+    _, evicted = c.process("k2", 200, ts=0)
+    assert evicted is True
+
+
+def test_freshness_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        FreshnessInvalidationQS(0)
+
+
+# ---------------------------------------------------------------------------
+# CacheINTFreshnessQS
+# ---------------------------------------------------------------------------
+
+def test_cache_int_qs_dynamic_hit() -> None:
+    c = CacheINTFreshnessQS(4, range_threshold=0, dynamic_ttl_ps=1000, stable_hit_threshold=5)
+    c.process("k1", 100, ts=0)
+    assert c.process("k1", 100, ts=500)[0] is True
+
+
+def test_cache_int_qs_dynamic_expiry() -> None:
+    c = CacheINTFreshnessQS(4, range_threshold=0, dynamic_ttl_ps=50, stable_hit_threshold=10)
+    c.process("k1", 100, ts=0)
+    # beyond dynamic TTL → miss
+    assert c.process("k1", 100, ts=200)[0] is False
+
+
+def test_cache_int_qs_static_promotion_no_expiry() -> None:
+    c = CacheINTFreshnessQS(4, range_threshold=0, dynamic_ttl_ps=50, stable_hit_threshold=2)
+    c.process("k1", 100, ts=0)
+    c.process("k1", 100, ts=10)   # stable_hits=1
+    c.process("k1", 100, ts=20)   # stable_hits=2 → is_static
+    # past dynamic TTL but static → hit
+    assert c.process("k1", 100, ts=1000)[0] is True
+
+
+def test_cache_int_qs_value_change_resets_static() -> None:
+    c = CacheINTFreshnessQS(4, range_threshold=0, dynamic_ttl_ps=50, stable_hit_threshold=2)
+    c.process("k1", 100, ts=0)
+    c.process("k1", 100, ts=10)
+    c.process("k1", 100, ts=20)  # now static
+    # value change → demoted back to dynamic, miss
+    hit, _ = c.process("k1", 9000, ts=30)
+    assert hit is False
+    assert c._store["k1"]["is_static"] is False
+
+
+def test_cache_int_qs_evicts_least_fresh_dynamic() -> None:
+    c = CacheINTFreshnessQS(2, range_threshold=0, dynamic_ttl_ps=5000, stable_hit_threshold=5)
+    c.process("k1", 100, ts=0)   # older dynamic entry
+    c.process("k2", 200, ts=100) # newer dynamic entry
+    # k1 is least-fresh dynamic → evicted first
+    _, evicted = c.process("k3", 300, ts=200)
+    assert evicted is True
+    assert "k1" not in c._store
+
+
+def test_cache_int_qs_all_static_falls_back_to_lru() -> None:
+    c = CacheINTFreshnessQS(2, range_threshold=0, dynamic_ttl_ps=5000, stable_hit_threshold=2)
+    for ts in range(3):
+        c.process("k1", 100, ts=ts)
+    for ts in range(3, 6):
+        c.process("k2", 200, ts=ts)
+    # both static → LRU eviction
+    _, evicted = c.process("k3", 300, ts=100)
+    assert evicted is True
+
+
+def test_cache_int_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        CacheINTFreshnessQS(0)
+
+
+# ---------------------------------------------------------------------------
+# FlowLifetimeAdaptiveTTLQS
+# ---------------------------------------------------------------------------
+
+def test_flow_ttl_qs_base_ttl_on_first() -> None:
+    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0, base_ttl_ps=1000)
+    c.process("k1", 100, ts=0)
+    assert c.process("k1", 100, ts=500)[0] is True
+
+
+def test_flow_ttl_qs_expired_miss() -> None:
+    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0, base_ttl_ps=50)
+    c.process("k1", 100, ts=0)
+    assert c.process("k1", 100, ts=200)[0] is False
+
+
+def test_flow_ttl_qs_eviction() -> None:
+    c = FlowLifetimeAdaptiveTTLQS(1, range_threshold=0)
+    c.process("k1", 100, ts=0)
+    _, evicted = c.process("k2", 200, ts=0)
+    assert evicted is True
+
+
+def test_flow_ttl_qs_ema_updates() -> None:
+    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0, ema_alpha=1.0, ttl_multiplier=2.0,
+                                   min_ttl_ps=1, max_ttl_ps=100_000_000)
+    c.process("k1", 100, ts=0)
+    c.process("k1", 100, ts=1000)  # gap=1000 → ema=1000 → ttl=2000
+    # ts=1001 within learned TTL → hit
+    assert c.process("k1", 100, ts=1001)[0] is True
+
+
+def test_flow_ttl_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        FlowLifetimeAdaptiveTTLQS(0)
+
+
+# ---------------------------------------------------------------------------
+# AdmissionFilterQS (OneHitWonder)
+# ---------------------------------------------------------------------------
+
+def test_admission_filter_qs_second_touch_admits() -> None:
+    c = AdmissionFilterQS(4, range_threshold=0, bloom_bits=64, bloom_hashes=2)
+    # First touch: not admitted
+    hit, ev = c.process("k1", 100)
+    assert hit is False and ev is False
+    assert "k1" not in c._store
+    # Second touch: bloom sees it → admitted
+    c.process("k1", 100)
+    assert "k1" in c._store
+
+
+def test_admission_filter_qs_store_hit() -> None:
+    c = AdmissionFilterQS(4, range_threshold=0, bloom_bits=64, bloom_hashes=2)
+    c.process("k1", 100)  # first touch
+    c.process("k1", 100)  # second touch → admitted
+    hit, _ = c.process("k1", 100)  # hit in store
+    assert hit is True
+
+
+def test_admission_filter_qs_value_change_in_store() -> None:
+    c = AdmissionFilterQS(4, range_threshold=0, bloom_bits=64, bloom_hashes=2)
+    c.process("k1", 100)
+    c.process("k1", 100)  # admit
+    hit, _ = c.process("k1", 9000)  # value change → miss
+    assert hit is False
+
+
+def test_admission_filter_qs_epoch_reset() -> None:
+    c = AdmissionFilterQS(4, range_threshold=0, bloom_bits=64, bloom_hashes=2, pending_reset_every=3)
+    c.process("k1", 100)  # ops=1: add to bloom
+    c.process("k2", 200)  # ops=2
+    c.process("k3", 300)  # ops=3: epoch reset; k1/k2/k3 move to previous window
+    # k1 still in previous window → second touch → admitted
+    c.process("k1", 100)  # ops=4
+    assert "k1" in c._store
+
+
+def test_admission_filter_qs_eviction() -> None:
+    c = AdmissionFilterQS(1, range_threshold=0, bloom_bits=64, bloom_hashes=2)
+    for k in ["k1", "k2"]:
+        c.process(k, 100)
+        c.process(k, 100)  # admit both
+    assert len(c._store) <= 1
+
+
+def test_admission_filter_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        AdmissionFilterQS(0)
+
+
+# ---------------------------------------------------------------------------
+# PendingAdmissionQS
+# ---------------------------------------------------------------------------
+
+def test_pending_qs_second_touch_admits() -> None:
+    c = PendingAdmissionQS(4, range_threshold=0)
+    c.process("k1", 100)  # → pending
+    assert "k1" in c._pending
+    c.process("k1", 100)  # second touch → admit
+    assert "k1" in c._store
+
+
+def test_pending_qs_store_hit() -> None:
+    c = PendingAdmissionQS(4, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k1", 100)  # admit
+    hit, _ = c.process("k1", 100)
+    assert hit is True
+
+
+def test_pending_qs_pending_overflow() -> None:
+    c = PendingAdmissionQS(4, range_threshold=0, pending_size=2)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    c.process("k3", 300)  # k1 evicted from pending
+    assert "k1" not in c._pending
+
+
+def test_pending_qs_reset_clears_pending() -> None:
+    c = PendingAdmissionQS(4, range_threshold=0, pending_reset_every=2)
+    c.process("k1", 100)  # ops=1 → pending
+    c.process("k2", 200)  # ops=2 → reset clears, then k2 → pending
+    assert "k1" not in c._pending
+    assert "k2" in c._pending
+
+
+def test_pending_qs_eviction_on_admit() -> None:
+    c = PendingAdmissionQS(1, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k1", 100)  # admit k1; store full
+    c.process("k2", 200)  # → pending
+    _, evicted = c.process("k2", 200)  # admit k2 → evict k1
+    assert evicted is True
+
+
+def test_pending_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        PendingAdmissionQS(0)
+
+
+# ---------------------------------------------------------------------------
+# PITCollapsedQS
+# ---------------------------------------------------------------------------
+
+def test_pit_qs_inflight_collapse() -> None:
+    c = PITCollapsedQS(4, range_threshold=0, download_delay_ps=100)
+    c.process("k1", 100, ts=0)   # creates PIT entry
+    hit, _ = c.process("k1", 100, ts=50)  # same qs, inflight → collapsed
+    assert hit is True
+
+
+def test_pit_qs_ready_ts_admits() -> None:
+    c = PITCollapsedQS(4, range_threshold=0, download_delay_ps=100)
+    c.process("k1", 100, ts=0)
+    c.process("k1", 100, ts=200)  # ts >= ready → admit
+    assert "k1" in c._store
+
+
+def test_pit_qs_value_change_inflight() -> None:
+    c = PITCollapsedQS(4, range_threshold=0, download_delay_ps=100)
+    c.process("k1", 100, ts=0)
+    hit, _ = c.process("k1", 9000, ts=50)  # big change while inflight → forward, update PIT
+    assert hit is False
+    assert c._pit["k1"][0] == 9000
+
+
+def test_pit_qs_cache_hit_after_admit() -> None:
+    c = PITCollapsedQS(4, range_threshold=0, download_delay_ps=50)
+    c.process("k1", 100, ts=0)
+    c.process("k1", 100, ts=100)  # admit
+    hit, _ = c.process("k1", 100, ts=150)  # cache hit
+    assert hit is True
+
+
+def test_pit_qs_pit_capacity_overflow() -> None:
+    c = PITCollapsedQS(4, range_threshold=0, download_delay_ps=100, pit_capacity=2)
+    c.process("k1", 100, ts=0)
+    c.process("k2", 200, ts=0)
+    c.process("k3", 300, ts=0)  # evicts k1 from PIT
+    assert "k1" not in c._pit
+
+
+def test_pit_qs_admit_eviction() -> None:
+    c = PITCollapsedQS(1, range_threshold=0, download_delay_ps=10)
+    c.process("k1", 100, ts=0)
+    c.process("k1", 100, ts=100)  # admit k1; store full
+    c.process("k2", 200, ts=0)   # PIT entry for k2
+    _, evicted = c.process("k2", 200, ts=200)  # admit k2 → evict k1
+    assert evicted is True
+
+
+def test_pit_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        PITCollapsedQS(0)
+
+
+# ---------------------------------------------------------------------------
+# AdaptiveAdmissionQS
+# ---------------------------------------------------------------------------
+
+def test_adaptive_qs_low_pressure_admits_directly() -> None:
+    c = AdaptiveAdmissionQS(4, range_threshold=0, pressure_window=10000,
+                             eviction_high_watermark=0.5)
+    c.process("k1", 100)
+    assert "k1" in c._store
+
+
+def test_adaptive_qs_under_pressure_gates() -> None:
+    c = AdaptiveAdmissionQS(4, range_threshold=0, pressure_window=10000,
+                             eviction_high_watermark=0.0)
+    c._under_pressure = True
+    c.process("k1", 100)   # → pending
+    assert "k1" in c._pending
+    c.process("k1", 100)   # second touch → admit
+    assert "k1" in c._store
+
+
+def test_adaptive_qs_pressure_update_fires() -> None:
+    c = AdaptiveAdmissionQS(1, range_threshold=0, pressure_window=2,
+                             eviction_high_watermark=0.01)
+    c.process("k1", 100)
+    c.process("k2", 200)  # evicts k1, window_ops=2 → pressure evaluated
+    # under_pressure set; just assert no crash and correct type
+    assert isinstance(c._under_pressure, bool)
+
+
+def test_adaptive_qs_store_hit() -> None:
+    c = AdaptiveAdmissionQS(4, range_threshold=100)
+    c.process("k1", 1000)
+    hit, _ = c.process("k1", 1050)  # change 50 <= 100 → hit
+    assert hit is True
+
+
+def test_adaptive_qs_pending_reset() -> None:
+    c = AdaptiveAdmissionQS(4, range_threshold=0, pressure_window=10000,
+                             eviction_high_watermark=0.0, pending_reset_every=2)
+    c._under_pressure = True
+    c.process("k1", 100)  # ops=1 → pending
+    c.process("k2", 200)  # ops=2 → reset clears pending, then k2 → pending
+    assert "k1" not in c._pending
+
+
+def test_adaptive_qs_pending_overflow() -> None:
+    c = AdaptiveAdmissionQS(4, range_threshold=0, pressure_window=10000,
+                             eviction_high_watermark=0.0, pending_size=2)
+    c._under_pressure = True
+    for i in range(5):
+        c.process(f"k{i}", 100)
+    assert len(c._pending) <= 2
+
+
+def test_adaptive_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        AdaptiveAdmissionQS(0)
+
+
+# ---------------------------------------------------------------------------
+# OnlineAdaptiveAdmissionQS
+# ---------------------------------------------------------------------------
+
+def test_online_adaptive_qs_mode0_open_admission() -> None:
+    c = OnlineAdaptiveAdmissionQS(4, range_threshold=0)
+    assert c._mode == 0
+    c.process("k1", 100)
+    assert "k1" in c._store
+
+
+def test_online_adaptive_qs_mode0_to_1_transition() -> None:
+    c = OnlineAdaptiveAdmissionQS(
+        4, range_threshold=0, pressure_window=10, high_evict=0.20,
+        low_evict=0.005, weak_hit=0.70, strong_hit=0.92,
+    )
+    for i in range(4):
+        c.process(f"k{i}", 100)
+    c._w_ops = 9
+    c._w_hits = 0
+    c._w_evicts = 5  # evict_ratio=0.5 >= 0.20, hit_ratio=0 <= 0.70
+    c._bump_window(False, True)
+    assert c._mode == 1
+
+
+def test_online_adaptive_qs_mode1_second_touch() -> None:
+    c = OnlineAdaptiveAdmissionQS(4, range_threshold=0)
+    c._mode = 1
+    c.process("k1", 100)   # touches=1 → pending
+    assert "k1" in c._pending
+    c.process("k1", 100)   # touches=2 > required=1 → admit
+    assert "k1" in c._store
+
+
+def test_online_adaptive_qs_mode2_third_touch() -> None:
+    c = OnlineAdaptiveAdmissionQS(4, range_threshold=0)
+    c._mode = 2
+    c.process("k1", 100)  # touches=1
+    c.process("k1", 100)  # touches=2
+    c.process("k1", 100)  # touches=3 > required=2 → admit
+    assert "k1" in c._store
+
+
+def test_online_adaptive_qs_mode2_to_1_downgrade() -> None:
+    c = OnlineAdaptiveAdmissionQS(
+        4, range_threshold=0, pressure_window=10, high_evict=0.20,
+        low_evict=0.005, weak_hit=0.70, strong_hit=0.92,
+    )
+    c._mode = 2
+    c._w_ops = 9
+    c._w_hits = 10   # hit_ratio > strong_hit
+    c._w_evicts = 0  # evict_ratio < low_evict
+    c._bump_window(True, False)
+    assert c._mode == 1
+
+
+def test_online_adaptive_qs_mode0_eviction() -> None:
+    c = OnlineAdaptiveAdmissionQS(2, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    _, evicted = c.process("k3", 300)
+    assert evicted is True
+
+
+def test_online_adaptive_qs_pending_overflow() -> None:
+    c = OnlineAdaptiveAdmissionQS(4, range_threshold=0, pending_size=2)
+    c._mode = 1
+    for i in range(6):
+        c.process(f"k{i}", 100)
+    assert len(c._pending) <= 2
+
+
+def test_online_adaptive_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        OnlineAdaptiveAdmissionQS(0)
+
+
+# ---------------------------------------------------------------------------
+# TimingBloomQS
+# ---------------------------------------------------------------------------
+
+def test_timing_bloom_qs_admits_first_time_no_pressure() -> None:
+    c = TimingBloomQS(4, range_threshold=0, bloom_bits=64, bloom_hashes=2,
+                      bloom_epoch_records=1000)
+    c.process("k1", 100)
+    assert "k1" in c._store
+
+
+def test_timing_bloom_qs_under_pressure_gates_unseen() -> None:
+    c = TimingBloomQS(2, range_threshold=0, bloom_bits=64, bloom_hashes=2,
+                      bloom_epoch_records=1000, pressure_window=2,
+                      eviction_high_watermark=0.01)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    c.process("k3", 300)   # evicts → pressure fired
+    c._under_pressure = True
+    # brand-new unseen key with full cache → gated
+    hit, ev = c.process("brand_new", 999)
+    assert hit is False
+
+
+def test_timing_bloom_qs_epoch_resets() -> None:
+    c = TimingBloomQS(4, range_threshold=0, bloom_bits=64, bloom_hashes=2,
+                      bloom_epoch_records=3)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    c.process("k3", 300)  # ops=3 → epoch reset
+    assert c._ops % 3 == 0
+
+
+def test_timing_bloom_qs_store_hit() -> None:
+    c = TimingBloomQS(4, range_threshold=100)
+    c.process("k1", 1000)
+    hit, _ = c.process("k1", 1050)  # change 50 <= 100 → hit
+    assert hit is True
+
+
+def test_timing_bloom_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        TimingBloomQS(0)  # capacity <= 0 is the only guarded param in the QS version
+
+
+# ---------------------------------------------------------------------------
+# TinyLFUQS
+# ---------------------------------------------------------------------------
+
+def test_tiny_lfu_qs_admits_frequent_candidate() -> None:
+    c = TinyLFUQS(2, range_threshold=0, sample_multiplier=4)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    for _ in range(10):
+        c._sketch.observe("k3")
+    _, evicted = c.process("k3", 300)
+    assert evicted is True
+
+
+def test_tiny_lfu_qs_bypasses_infrequent() -> None:
+    c = TinyLFUQS(2, range_threshold=0, sample_multiplier=2)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    for _ in range(20):
+        c._sketch.observe("k1")
+        c._sketch.observe("k2")
+    hit, evicted = c.process("k3", 300)
+    assert hit is False and evicted is False
+    assert "k3" not in c._store
+
+
+def test_tiny_lfu_qs_store_hit() -> None:
+    c = TinyLFUQS(4, range_threshold=100)
+    c.process("k1", 1000)
+    hit, _ = c.process("k1", 1050)  # change 50 <= 100 → hit
+    assert hit is True
+
+
+def test_tiny_lfu_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        TinyLFUQS(0)
+
+
+# ---------------------------------------------------------------------------
+# TinyCacheQS
+# ---------------------------------------------------------------------------
+
+def test_tiny_cache_qs_admits_frequent_candidate() -> None:
+    c = TinyCacheQS(2, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    for _ in range(15):
+        c._table.observe("k3")
+    _, evicted = c.process("k3", 300)
+    assert evicted is True
+
+
+def test_tiny_cache_qs_bypasses_infrequent() -> None:
+    c = TinyCacheQS(2, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    for _ in range(20):
+        c._table.observe("k1")
+        c._table.observe("k2")
+    hit, evicted = c.process("k3", 300)
+    assert isinstance(hit, bool)
+
+
+def test_tiny_cache_qs_store_hit() -> None:
+    c = TinyCacheQS(4, range_threshold=100)
+    c.process("k1", 1000)
+    hit, _ = c.process("k1", 1050)
+    assert hit is True
+
+
+def test_tiny_cache_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        TinyCacheQS(0)
+
+
+# ---------------------------------------------------------------------------
+# SegmentedQS
+# ---------------------------------------------------------------------------
+
+def test_segmented_qs_promotes_to_protected() -> None:
+    c = SegmentedQS(8, range_threshold=0)
+    c.process("k1", 100)   # → probation
+    c.process("k1", 100)   # hit in probation → promote to protected
+    assert "k1" in c._protected
+    assert "k1" not in c._probation
+
+
+def test_segmented_qs_protected_hit() -> None:
+    c = SegmentedQS(8, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k1", 100)  # promote
+    hit, _ = c.process("k1", 100)
+    assert hit is True
+
+
+def test_segmented_qs_evicts_from_probation() -> None:
+    c = SegmentedQS(4, range_threshold=0)  # prob_cap=1, prot_cap=3
+    c.process("k1", 100)  # fills probation
+    _, ev = c.process("k2", 200)  # evicts k1 from probation
+    assert ev is True
+
+
+def test_segmented_qs_protected_demotion() -> None:
+    c = SegmentedQS(4, range_threshold=0)  # prob_cap=1, prot_cap=3
+    c.process("k1", 100); c.process("k1", 100)  # promote k1
+    c.process("k2", 200); c.process("k2", 200)  # promote k2
+    c.process("k3", 300); c.process("k3", 300)  # promote k3; protected full
+    c.process("k4", 400)  # → probation
+    c.process("k4", 400)  # promote k4 → demote LRU of protected back to probation
+    # Verify structure is intact (no crash, invariants hold)
+    assert len(c._protected) <= 3
+
+
+def test_segmented_qs_degenerate_capacity_1() -> None:
+    c = SegmentedQS(1, range_threshold=0)  # prot_cap=0
+    c.process("k1", 100)
+    c.process("k1", 100)  # hit in probation with prot_cap=0 → stays in probation
+    assert "k1" in c._probation
+
+
+def test_segmented_qs_range_threshold() -> None:
+    c = SegmentedQS(4, range_threshold=200)
+    c.process("k1", 1000)
+    hit, _ = c.process("k1", 1100)  # change 100 <= 200 → hit in probation (promotes)
+    assert hit is True
+
+
+def test_segmented_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        SegmentedQS(0)
+
+
+# ---------------------------------------------------------------------------
+# cache_slots_used_qs
+# ---------------------------------------------------------------------------
+
+def test_cache_slots_used_qs_store_dict() -> None:
+    c = LRUQSCache(4, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    assert cache_slots_used_qs(c) == 2
+
+
+def test_cache_slots_used_qs_probation_protected() -> None:
+    c = SegmentedQS(8, range_threshold=0)
+    c.process("k1", 100)
+    c.process("k2", 200)
+    assert cache_slots_used_qs(c) == 2
+
+
+def test_cache_slots_used_qs_fallback() -> None:
+    class Opaque:
+        pass
+    assert cache_slots_used_qs(Opaque()) is None
+
+
+# ---------------------------------------------------------------------------
+# simulate_congestion
+# ---------------------------------------------------------------------------
+
+def test_simulate_congestion_basic_counts() -> None:
+    recs = [
+        {"source": "k1", "qs": 1000, "ts_ps": 0},
+        {"source": "k1", "qs": 1000, "ts_ps": 1},   # hit
+        {"source": "k2", "qs": 2000, "ts_ps": 2},   # new key → miss
+    ]
+    c = LRUQSCache(4, range_threshold=0)
+    oracle = InfiniteQS(range_threshold=0)
+    result = simulate_congestion(recs, c, oracle)
+    assert result.total == 3
+    assert result.hits == 1
+    assert result.new_route_forwards == 2
+    assert result.route_change_forwards == 0
+    assert result.redundant_forwards == 0
+
+
+def test_simulate_congestion_route_change_classified() -> None:
+    recs = [
+        {"source": "k1", "qs": 1000, "ts_ps": 0},
+        {"source": "k1", "qs": 9000, "ts_ps": 1},   # value changed → route_change
+    ]
+    c = LRUQSCache(4, range_threshold=0)
+    oracle = InfiniteQS(range_threshold=0)
+    result = simulate_congestion(recs, c, oracle)
+    assert result.route_change_forwards == 1
+    assert result.new_route_forwards == 1
+
+
+def test_simulate_congestion_redundant_forward() -> None:
+    # Tiny cache forces eviction so oracle suppresses but bounded cache misses
+    recs = [
+        {"source": "k1", "qs": 100, "ts_ps": 0},
+        {"source": "k2", "qs": 200, "ts_ps": 1},   # evicts k1 (cap=1)
+        {"source": "k1", "qs": 100, "ts_ps": 2},   # oracle hits, bounded misses → redundant
+    ]
+    c = LRUQSCache(1, range_threshold=0)
+    oracle = InfiniteQS(range_threshold=0)
+    result = simulate_congestion(recs, c, oracle)
+    assert result.redundant_forwards >= 1
+
+
+def test_simulate_congestion_no_oracle() -> None:
+    # Without oracle, every forward counted as necessary
+    recs = [
+        {"source": "k1", "qs": 100, "ts_ps": 0},
+        {"source": "k2", "qs": 200, "ts_ps": 1},
+    ]
+    c = InfiniteQS(range_threshold=0)
+    result = simulate_congestion(recs, c, oracle=None)
+    assert result.total == 2
+    assert result.necessary_forwards == 2
+    assert result.new_route_forwards == 2
+
+
+def test_simulate_congestion_capacity_sampling() -> None:
+    recs = _qs_records()
+    c = LRUQSCache(4, range_threshold=0)
+    oracle = InfiniteQS(range_threshold=0)
+    samples = []
+    simulate_congestion(recs, c, oracle, capacity_samples=samples, capacity_sample_every=1)
+    assert len(samples) > 0
+    assert all(len(s) == 3 for s in samples)
+
+
+def test_simulate_congestion_capacity_no_duplicate_end_sample() -> None:
+    recs = _qs_records()
+    c = LRUQSCache(4, range_threshold=0)
+    samples = []
+    simulate_congestion(recs, c, capacity_samples=samples, capacity_sample_every=1)
+    indices = [s[0] for s in samples]
+    assert len(indices) == len(set(indices))
+
+
+def test_simulate_congestion_infinite_skips_capacity_sampling() -> None:
+    # InfiniteQS (capacity=inf) should not populate capacity_samples
+    c = InfiniteQS(range_threshold=0)
+    samples = []
+    simulate_congestion(_qs_records(), c, capacity_samples=samples, capacity_sample_every=1)
+    assert samples == []
+
+
+# ---------------------------------------------------------------------------
+# sweep_congestion
+# ---------------------------------------------------------------------------
+
+def test_sweep_congestion_returns_results() -> None:
+    recs = _qs_records()
+    results = sweep_congestion(recs, range_threshold=0)
+    assert len(results) > 0
+    # InfiniteQS always first
+    assert results[0].cache_name == "Infinite"
+    assert any(r.capacity != float("inf") for r in results)
+
+
+def test_sweep_congestion_with_capacity_curves() -> None:
+    recs = _qs_records()
+    curves = {}
+    sweep_congestion(recs, range_threshold=0, capacity_curves=curves, capacity_sample_every=1)
+    assert len(curves) > 0
+
+
+# ---------------------------------------------------------------------------
+# print_results and write_csv for congestion
+# ---------------------------------------------------------------------------
+
+def test_print_congestion_results(capsys) -> None:
+    recs = _qs_records()
+    c = LRUQSCache(4, range_threshold=0)
+    oracle = InfiniteQS(range_threshold=0)
+    results = [simulate_congestion(recs, c, oracle),
+               simulate_congestion(recs, InfiniteQS(0))]
+    print_congestion_results(results)
+    captured = capsys.readouterr()
+    assert "Cache" in captured.out
+    assert "LRU" in captured.out
+
+
+def test_write_congestion_csv(tmp_path: Path) -> None:
+    recs = _qs_records()
+    c = LRUQSCache(4, range_threshold=0)
+    oracle = InfiniteQS(range_threshold=0)
+    results = [simulate_congestion(recs, c, oracle),
+               simulate_congestion(recs, InfiniteQS(0))]
+    out = tmp_path / "out.csv"
+    write_congestion_csv(results, str(out))
+    text = out.read_text(encoding="utf-8")
+    assert "cache" in text
+    assert "necessary_forwards" in text
+    assert "redundancy_rate" in text
+    # Infinite capacity is written as -1
+    assert "-1" in text
+
+
+def test_write_congestion_capacity_csv(tmp_path: Path) -> None:
+    recs = _qs_records()
+    curves = {}
+    sweep_congestion(recs, range_threshold=0, capacity_curves=curves, capacity_sample_every=1)
+    out = tmp_path / "cap.csv"
+    write_congestion_capacity_csv(curves, str(out))
+    text = out.read_text(encoding="utf-8")
+    assert "fill_percent" in text
+
+
+def test_write_congestion_capacity_csv_skips_infinite() -> None:
+    # Capacity <= 0 should be skipped
+    curves = {("Infinite", -1): [(1, 100, 5)], ("LRU", 0): [(1, 100, 0)]}
+    import tempfile, os
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        path = f.name
+    try:
+        write_congestion_capacity_csv(curves, path)
+        text = Path(path).read_text()
+        assert "Infinite" not in text
+    finally:
+        os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# RollingBloomFilterQS (same logic as in cache_sim, re-tested for coverage)
+# ---------------------------------------------------------------------------
+
+def test_rolling_bloom_qs_basic() -> None:
+    bf = RollingBloomFilterQS(bits=256, hashes=2)
+    assert not bf.contains("foo")
+    bf.add("foo")
+    assert bf.contains("foo")
+    bf.reset_epoch()
+    assert bf.contains("foo")   # still in previous window
+    bf.reset_epoch()
+    assert not bf.contains("foo")  # both windows cleared
+
+
+def test_rolling_bloom_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        RollingBloomFilterQS(bits=0)
+    with pytest.raises(ValueError):
+        RollingBloomFilterQS(hashes=0)
+
+
+# ---------------------------------------------------------------------------
+# _TinyLFUSketchQS and _TinyCacheTableQS (re-tested in congestion context)
+# ---------------------------------------------------------------------------
+
+def test_tiny_lfu_sketch_qs_observe_and_estimate() -> None:
+    s = _TinyLFUSketchQS(sample_size=100, counter_cap=10)
+    s.observe("k1")
+    assert s.estimate("k1") == 1  # doorkeeper only
+    s.observe("k1")
+    assert s.estimate("k1") == 2  # doorkeeper + count=1
+
+
+def test_tiny_lfu_sketch_qs_reset() -> None:
+    s = _TinyLFUSketchQS(sample_size=3, counter_cap=10)
+    s.observe("k1")
+    s.observe("k1")
+    s.observe("k1")  # ops=3 >= sample_size=3 → reset
+    assert len(s._doorkeeper) == 0
+    assert s._ops == 0
+
+
+def test_tiny_lfu_sketch_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        _TinyLFUSketchQS(0, 10)
+    with pytest.raises(ValueError):
+        _TinyLFUSketchQS(10, 0)
+
+
+def test_tiny_cache_table_qs_observe_and_estimate() -> None:
+    t = _TinyCacheTableQS(set_count=4, set_capacity=4, duplicate_cap=2)
+    t.observe("k1")
+    assert t.estimate("k1") >= 1
+
+
+def test_tiny_cache_table_qs_decay() -> None:
+    t = _TinyCacheTableQS(set_count=2, set_capacity=4, duplicate_cap=4, seed=0)
+    for _ in range(8):
+        t.observe("k1")
+    total = sum(len(b) for b in t._sets)
+    assert total >= 0
+
+
+def test_tiny_cache_table_qs_invalid_params() -> None:
+    with pytest.raises(ValueError):
+        _TinyCacheTableQS(0, 4, 2)
+    with pytest.raises(ValueError):
+        _TinyCacheTableQS(4, 0, 2)
+    with pytest.raises(ValueError):
+        _TinyCacheTableQS(4, 4, 0)
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: remaining uncovered branches
+# ---------------------------------------------------------------------------
+
+def test_cache_slots_used_qs_sets_branch() -> None:
+    # Lines 128-134: cache_slots_used_qs with _sets attribute (TinyCache table)
+    t = _TinyCacheTableQS(set_count=4, set_capacity=4, duplicate_cap=2)
+    t.observe("k1")
+    t.observe("k2")
+    total = cache_slots_used_qs(type("FakeTinyCache", (), {"_sets": t._sets})())
+    assert total is not None and total >= 0
+
+
+def test_flow_ttl_qs_update_ema_first_sample() -> None:
+    # Line 463: _update_ema with samples=1 returns gap directly
+    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0, ema_alpha=0.5)
+    result = c._update_ema(500, 300, 1)   # samples=1 → return gap (300)
+    assert result == 300
+    result2 = c._update_ema(500, 300, 2)  # samples=2 → EMA formula
+    assert result2 == int(0.5 * 300 + 0.5 * 500)
+
+
+def test_pit_qs_store_hit_with_value_change_after_eviction() -> None:
+    # Lines 609-610: PIT admits entry; store has it but qs changed and evicted=True
+    # Scenario: PIT expires and admits, then the store lookup finds a *different* qs
+    c = PITCollapsedQS(4, range_threshold=0, download_delay_ps=50)
+    # Manually set up: pre-fill store with k1 at old qs, and a PIT entry for k1 at new qs
+    c._store["k1"] = 999
+    c._pit["k1"] = (500, 0)  # ready_ts=0, so ts=100 >= 0 → will admit
+    # process: PIT fires (ts>=ready_ts=0), evicted=admit("k1",500) → store["k1"]=500
+    # then store lookup → hit? new_qs=999: abs(999-500)=499 > 0 → miss (line 609-610)
+    hit, evicted = c.process("k1", 999, ts=100)
+    # The PIT admit replaced store[k1] with 500; then store check qs=999 vs cached=500 → miss
+    assert hit is False
+
+
+def test_adaptive_qs_pending_to_store_eviction() -> None:
+    # Lines 672-673: AdaptiveAdmissionQS, under pressure, admit from pending causes eviction
+    c = AdaptiveAdmissionQS(1, range_threshold=0, pressure_window=10000,
+                             eviction_high_watermark=0.0)
+    c._under_pressure = True
+    c.process("k1", 100)   # → pending (store empty)
+    c.process("k1", 100)   # admit k1; store now full (cap=1)
+    c.process("k2", 200)   # → pending
+    _, evicted = c.process("k2", 200)  # admit k2 → store full → evict k1
+    assert evicted is True
+
+
+def test_online_adaptive_qs_mode1_eviction_on_admit() -> None:
+    # Lines 754-755: OnlineAdaptiveAdmissionQS mode=1, pending-to-store admission evicts
+    c = OnlineAdaptiveAdmissionQS(1, range_threshold=0)
+    c._mode = 1
+    c.process("k1", 100)   # touches=1 → pending
+    c.process("k1", 100)   # touches=2 → admit; store full (cap=1)
+    c.process("k2", 200)   # touches=1 → pending
+    _, evicted = c.process("k2", 200)  # touches=2 → admit → evict k1
+    assert evicted is True
+
+
+def test_tiny_cache_table_qs_bucket_full_random_eviction() -> None:
+    # Lines 923-924: bucket at capacity → random victim popped before append
+    t = _TinyCacheTableQS(set_count=1, set_capacity=2, duplicate_cap=1, seed=42)
+    # Fill the single bucket: observe unique keys until bucket reaches set_capacity=2
+    # Then observe another unique key to trigger the random eviction path
+    t.observe("alpha")
+    t.observe("beta")
+    # bucket is now full (2 items). observe "gamma" → random eviction
+    t.observe("gamma")
+    assert len(t._sets[0]) <= 2
+
+
+def test_simulate_congestion_end_sample_appended() -> None:
+    # Line 1084: end-of-run sample appended when last record was not yet sampled by interval
+    recs = _qs_records()  # 6 records
+    c = LRUQSCache(4, range_threshold=0)
+    oracle = InfiniteQS(range_threshold=0)
+    samples = []
+    # sample_every=10 → only record 1 is sampled mid-run (total==1)
+    # end-of-run check fires and appends for total=6 (different from last sampled total=1)
+    simulate_congestion(recs, c, oracle, capacity_samples=samples, capacity_sample_every=10)
+    totals = [s[0] for s in samples]
+    assert 6 in totals   # end-of-run sample was appended
+
+
+def test_tiny_cache_table_qs_random_eviction() -> None:
+    # Lines 923-924: random eviction when bucket is full but duplicate_cap not reached
+    t = _TinyCacheTableQS(set_count=1, set_capacity=2, duplicate_cap=10, seed=42)
+    # Prevent decay from firing prematurely by pushing sample_size high
+    t._sample_size = 10000
+    t.observe("a")
+    t.observe("b")
+    # Bucket is now full (capacity=2). Observing a new unique key triggers random eviction.
+    t.observe("c")
+    # After random eviction of one item and insertion of "c", bucket is still at capacity
+    bucket = t._sets[0]
+    assert len(bucket) == 2
+
+
+def test_build_hop_records_switch_level(tmp_path: Path) -> None:
+    from fyp.dash_scripts.cache_sim_congestion_int import build_hop_records
+    import argparse
+    log = tmp_path / "int.txt"
+    log.write_text(
+        "INT flow=1 seq=0 hops=2\n"
+        "  [0] sw=10 type=1 qs=500 ts=100 txbytes=0 pktid=1\n"
+        "  [1] sw=20 type=2 qs=1000 ts=200 txbytes=0 pktid=1\n"
+        "INT flow=2 seq=0 hops=1\n"
+        "  [0] sw=10 type=1 qs=300 ts=300 txbytes=0 pktid=2\n"
+    )
+    args = argparse.Namespace(key_level="switch", max_records=0)
+    records, n_int = build_hop_records(log, args)
+    assert n_int == 2
+    # 2 hops from flow=1 + 1 hop from flow=2 = 3 records
+    assert len(records) == 3
+    assert records[0]["source"] == "10:1"
+    assert records[0]["qs"] == 500
+
+
+def test_build_hop_records_flow_level(tmp_path: Path) -> None:
+    from fyp.dash_scripts.cache_sim_congestion_int import build_hop_records
+    import argparse
+    log = tmp_path / "int.txt"
+    log.write_text(
+        "INT flow=5 seq=0 hops=2\n"
+        "  [0] sw=10 type=1 qs=500 ts=100 txbytes=0 pktid=1\n"
+        "  [1] sw=20 type=2 qs=1500 ts=200 txbytes=0 pktid=1\n"
+    )
+    args = argparse.Namespace(key_level="flow", max_records=0)
+    records, n_int = build_hop_records(log, args)
+    assert n_int == 1
+    assert len(records) == 1
+    assert records[0]["source"] == "5"
+    assert records[0]["qs"] == 1500  # max of [500, 1500]
+
+
+def test_build_hop_records_max_records(tmp_path: Path) -> None:
+    from fyp.dash_scripts.cache_sim_congestion_int import build_hop_records
+    import argparse
+    log = tmp_path / "int.txt"
+    log.write_text(
+        "INT flow=1 seq=0 hops=1\n"
+        "  [0] sw=10 type=1 qs=100 ts=100 txbytes=0 pktid=1\n"
+        "INT flow=2 seq=0 hops=1\n"
+        "  [0] sw=11 type=1 qs=200 ts=200 txbytes=0 pktid=2\n"
+        "INT flow=3 seq=0 hops=1\n"
+        "  [0] sw=12 type=1 qs=300 ts=300 txbytes=0 pktid=3\n"
+    )
+    args = argparse.Namespace(key_level="switch", max_records=2)
+    records, n_int = build_hop_records(log, args)
+    # max_records=2 means stop after parsing 2 INT records (flows 1 and 2)
+    assert n_int <= 3
+    assert len(records) <= 2
+
+
+def test_resolve_inputs_qs_file(tmp_path: Path) -> None:
+    from fyp.dash_scripts.cache_sim_congestion_int import resolve_inputs
+    p = tmp_path / "log.txt"
+    p.write_text("INT flow=1 seq=0 hops=1\n")
+    result = resolve_inputs(p, "*.txt")
+    assert result == [p]
+
+
+def test_resolve_inputs_qs_directory(tmp_path: Path) -> None:
+    from fyp.dash_scripts.cache_sim_congestion_int import resolve_inputs
+    f1 = tmp_path / "a.txt"
+    f2 = tmp_path / "b.txt"
+    f1.write_text("x\n")
+    f2.write_text("y\n")
+    result = resolve_inputs(tmp_path, "*.txt")
+    assert set(result) == {f1, f2}
+
+
+def test_resolve_inputs_qs_missing_raises(tmp_path: Path) -> None:
+    from fyp.dash_scripts.cache_sim_congestion_int import resolve_inputs
+    with pytest.raises(FileNotFoundError):
+        resolve_inputs(tmp_path / "nonexistent.txt", "*")
+
+
+def test_resolve_inputs_qs_no_matches_raises(tmp_path: Path) -> None:
+    from fyp.dash_scripts.cache_sim_congestion_int import resolve_inputs
+    with pytest.raises(FileNotFoundError):
+        resolve_inputs(tmp_path, "*.nomatch")

@@ -46,6 +46,7 @@ DIRS=(
   "fyp/dash_dataset/synthetic"
   "fyp/dash_dataset/synthetic/ndp"
   "fyp/dash_dataset/synthetic/hpcc"
+  "fyp/dash_dataset/synthetic/tcp"
 
   "fyp/dash_results/imc/univ1/cache_sim/source_seen/plots"
   "fyp/dash_results/imc/univ1/cache_sim/source_seen/capacity/plots"
@@ -98,6 +99,20 @@ DIRS=(
   "fyp/dash_results/synthetic/hpcc/ttl_window/plots"
   "fyp/dash_results/synthetic/hpcc/flow_stats"
   "fyp/dash_results/synthetic/hpcc/temporal_locality/plots"
+
+  "fyp/dash_results/synthetic/tcp/connection_matrices"
+  "fyp/dash_results/synthetic/tcp/raw_logs"
+  "fyp/dash_results/synthetic/tcp/cache_sim/congestion/plots"
+  "fyp/dash_results/synthetic/tcp/cache_sim/congestion/capacity/plots"
+  "fyp/dash_results/synthetic/tcp/cache_sim/route_changes/plots"
+  "fyp/dash_results/synthetic/tcp/cache_sim/route_changes/capacity/plots"
+  "fyp/dash_results/synthetic/tcp/cache_sim/source_seen/plots"
+  "fyp/dash_results/synthetic/tcp/cache_sim/source_seen/capacity/plots"
+  "fyp/dash_results/synthetic/tcp/flow_size/plots"
+  "fyp/dash_results/synthetic/tcp/flow_lifetime/plots"
+  "fyp/dash_results/synthetic/tcp/ttl_window/plots"
+  "fyp/dash_results/synthetic/tcp/flow_stats"
+  "fyp/dash_results/synthetic/tcp/temporal_locality/plots"
 )
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -122,8 +137,9 @@ Place real datasets here:
 
 3) Synthetic
    - No external dataset needed.
-  - Generate logs with: bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp
-  - Or for HPCC: bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol hpcc
+   - Generate logs with: bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp
+   - Or for HPCC:  bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol hpcc
+   - Or for TCP:   bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol tcp
 
 After placing data, run pipelines from the repository root:
   python3 fyp/dash_scripts/run_imc_pipeline.py univ1

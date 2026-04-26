@@ -174,10 +174,10 @@ void HPCCSrc::processNack(const HPCCNack& nack){
 void HPCCSrc::processAck(const HPCCAck& ack) {
     HPCCAck::seq_t ackno = ack.ackno();
     
-    // Dash: debugging Abort trap: 6 crash, don't know why that happened
-    cout << "ACK received: ackno=" << ackno 
-     << " last_acked=" << _last_acked 
-     << " flightsize=" << _flightsize << endl;
+    // // Dash: debugging Abort trap: 6 crash, don't know why that happened
+    // cout << "ACK received: ackno=" << ackno 
+    //  << " last_acked=" << _last_acked 
+    //  << " flightsize=" << _flightsize << endl;
 
 
     if (ackno > _last_acked) { // a brand new ack    

@@ -6,6 +6,7 @@
 #include <functional>
 #include "ecn.h"
 #include "ndppacket.h"
+#include "tcppacket.h"
 
 CompositeQueue::CompositeQueue(linkspeed_bps bitrate, mem_b maxsize, EventList& eventlist, 
                                QueueLogger* logger)
@@ -118,22 +119,36 @@ CompositeQueue::completeService(){
     
     pkt->flow().logTraffic(*pkt,*this,TrafficLogger::PKT_DEPART);
 
-    // Stamp INT on NDP data packets at dequeue time (accurate queue depth)
-    if (pkt->type() == NDP) {
-        NdpPacket* np = static_cast<NdpPacket*>(pkt);
-        if (!np->header_only() && np->_int_hop < NHOPS) {
-            uint32_t qs = static_cast<uint32_t>(queuesize());
-            uint32_t sw_id = _switch ? _switch->getID()
-                                     : static_cast<uint32_t>(std::hash<std::string>{}(nodename()));
-            uint32_t sw_type = _switch ? _switch->getType() : 0;
-            np->_int_info[np->_int_hop]._queuesize = qs;
-            np->_int_info[np->_int_hop]._ts        = eventlist().now();
-            np->_int_info[np->_int_hop]._txbytes   = 0;
-            np->_int_info[np->_int_hop]._linkrate  = _bitrate;
-            np->_int_info[np->_int_hop]._packetid  = pkt->id();
-            np->_int_info[np->_int_hop]._switchID  = sw_id;
-            np->_int_info[np->_int_hop]._type      = sw_type;
-            np->_int_hop++;
+    // Stamp INT on data packets at dequeue time (accurate queue depth)
+    {
+        uint32_t qs = static_cast<uint32_t>(queuesize());
+        uint32_t sw_id = _switch ? _switch->getID()
+                                 : static_cast<uint32_t>(std::hash<std::string>{}(nodename()));
+        uint32_t sw_type = _switch ? _switch->getType() : 0;
+        if (pkt->type() == NDP) {
+            NdpPacket* np = static_cast<NdpPacket*>(pkt);
+            if (!np->header_only() && np->_int_hop < NHOPS) {
+                np->_int_info[np->_int_hop]._queuesize = qs;
+                np->_int_info[np->_int_hop]._ts        = eventlist().now();
+                np->_int_info[np->_int_hop]._txbytes   = 0;
+                np->_int_info[np->_int_hop]._linkrate  = _bitrate;
+                np->_int_info[np->_int_hop]._packetid  = pkt->id();
+                np->_int_info[np->_int_hop]._switchID  = sw_id;
+                np->_int_info[np->_int_hop]._type      = sw_type;
+                np->_int_hop++;
+            }
+        } else if (pkt->type() == TCP) {
+            TcpPacket* tp = static_cast<TcpPacket*>(pkt);
+            if (tp->_int_hop < NHOPS) {
+                tp->_int_info[tp->_int_hop]._queuesize = qs;
+                tp->_int_info[tp->_int_hop]._ts        = eventlist().now();
+                tp->_int_info[tp->_int_hop]._txbytes   = 0;
+                tp->_int_info[tp->_int_hop]._linkrate  = _bitrate;
+                tp->_int_info[tp->_int_hop]._packetid  = pkt->id();
+                tp->_int_info[tp->_int_hop]._switchID  = sw_id;
+                tp->_int_info[tp->_int_hop]._type      = sw_type;
+                tp->_int_hop++;
+            }
         }
     }
 

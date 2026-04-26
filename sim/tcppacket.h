@@ -4,6 +4,7 @@
 
 #include <list>
 #include "network.h"
+#include "hpccpacket.h"
 
 
 
@@ -16,14 +17,16 @@ class TcpPacket : public Packet {
 public:
     typedef uint64_t seq_t;
 
-    inline static TcpPacket* newpkt(PacketFlow &flow, const Route &route, 
+    inline static TcpPacket* newpkt(PacketFlow &flow, const Route &route,
                                     seq_t seqno, seq_t dataseqno,int size) {
         TcpPacket* p = _packetdb.allocPacket();
         p->set_route(flow,route,size,seqno+size-1); // The TCP sequence number is the first byte of the packet; I will ID the packet by its last byte.
         p->_type = TCP;
+        p->_direction = NONE;
         p->_seqno = seqno;
         p->_data_seqno=dataseqno;
         p->_syn = false;
+        p->_int_hop = 0;
         return p;
     }
 
@@ -46,6 +49,8 @@ public:
     inline simtime_picosec ts() const {return _ts;}
     inline void set_ts(simtime_picosec ts) {_ts = ts;}
     virtual PktPriority priority() const {return Packet::PRIO_LO;}
+    IntEntry _int_info[NHOPS];
+    uint32_t _int_hop;
 protected:
     seq_t _seqno,_data_seqno;
     bool _syn;
@@ -57,11 +62,12 @@ class TcpAck : public Packet {
 public:
     typedef TcpPacket::seq_t seq_t;
 
-    inline static TcpAck* newpkt(PacketFlow &flow, const Route &route, 
+    inline static TcpAck* newpkt(PacketFlow &flow, const Route &route,
                                  seq_t seqno, seq_t ackno,seq_t dackno) {
         TcpAck* p = _packetdb.allocPacket();
         p->set_route(flow,route,ACKSIZE,ackno);
         p->_type = TCPACK;
+        p->_direction = NONE;
         p->_seqno = seqno;
         p->_ackno = ackno;
         p->_data_ackno = dackno;

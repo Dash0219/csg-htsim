@@ -8,7 +8,7 @@ Usage:
 
 Options:
   -d, --dataset NAME        Only plot one synthetic dataset (e.g., a2a_pareto)
-  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: ndp)
+  -p, --protocol NAME       Transport protocol: ndp or hpcc or tcp (default: ndp)
   -m, --mode MODE           route_changes | source_seen | congestion | all (default: all)
   -n, --scale-to-infinite   Scale y-axis using observed infinite/data range
       --scale-factor X      Headroom multiplier with --scale-to-infinite (default: 1.25)
@@ -216,8 +216,8 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
-  echo "ERROR: --protocol must be ndp or hpcc" >&2
+if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" && "$PROTOCOL" != "tcp" ]]; then
+  echo "ERROR: --protocol must be ndp or hpcc or tcp" >&2
   exit 1
 fi
 

@@ -1,456 +1,402 @@
-// -*- c-basic-offset: 4; indent-tabs-mode: nil -*-      
+// -*- c-basic-offset: 4; indent-tabs-mode: nil -*-
 #include "config.h"
 #include <sstream>
 
 #include <iostream>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 #include "network.h"
 #include "randomqueue.h"
-#include "subflow_control.h"
 #include "shortflows.h"
 #include "pipe.h"
 #include "eventlist.h"
 #include "logfile.h"
 #include "loggers.h"
 #include "clock.h"
-#include "mtcp.h"
 #include "tcp.h"
-#include "tcp_transfer.h"
-#include "cbr.h"
+#include "compositequeue.h"
 #include "firstfit.h"
 #include "topology.h"
+#include "queue_lossless_input.h"
 #include "connection_matrix.h"
-//#include "vl2_topology.h"
+
 #include "fat_tree_topology.h"
-//#include "oversubscribed_fat_tree_topology.h"
-//#include "multihomed_fat_tree_topology.h"
-//#include "star_topology.h"
-//#include "bcube_topology.h"
+#include "fat_tree_switch.h"
+
 #include <list>
-
-// Simulation params
-
-#define PRINT_PATHS 0
 
 #define PERIODIC 0
 #include "main.h"
 
-uint32_t RTT = 10; // this is per link delay; identical RTT microseconds = 0.001 ms
-uint32_t DEFAULT_NODES = 16;
-//uint32_t N=128;
-
-FirstFit* ff = NULL;
-size_t subflow_count = 1;
-
-//#define SWITCH_BUFFER (SERVICE * RTT / 1000)
-#define USE_FIRST_FIT 0
-#define FIRST_FIT_INTERVAL 100
+uint32_t RTT = 1; // per link delay in us
+int DEFAULT_NODES = 432;
+#define DEFAULT_QUEUE_SIZE 15
 
 EventList eventlist;
 
 void exit_error(char* progr) {
-    cout << "Usage " << progr << " [UNCOUPLED(DEFAULT)|COUPLED_INC|FULLY_COUPLED|COUPLED_EPSILON] [epsilon][COUPLED_SCALABLE_TCP" << endl;
+    cout << "Usage " << progr
+         << " [-nodes N]\n\t[-conns C]\n\t[-cwnd cwnd_size]\n\t[-q queue_size]"
+            "\n\t[-tm traffic_matrix_file]\n\t[-strat route_strategy (single,ecmp_host)]"
+            "\n\t[-seed random_seed]\n\t[-end end_time_in_usec]"
+            "\n\t[-mtu MTU]\n\t[-hop_latency x]\n\t[-switch_latency x]" << endl;
     exit(1);
 }
 
-void print_path(std::ofstream &paths,const Route* rt){
-    for (uint32_t i=1;i<rt->size()-1;i+=2){
-        RandomQueue* q = (RandomQueue*)rt->at(i);
-        if (q!=NULL)
-            paths << q->str() << " ";
-        else 
-            paths << "NULL ";
-    }
-    
-    paths<<endl;
-}
-
 int main(int argc, char **argv) {
-    eventlist.setEndtime(timeFromSec(4));
-    Clock c(timeFromSec(50 / 100.), eventlist);
+    Clock c(timeFromSec(5 / 100.), eventlist);
+    mem_b queuesize = DEFAULT_QUEUE_SIZE;
     linkspeed_bps linkspeed = speedFromMbps((double)HOST_NIC);
-    int algo = COUPLED_EPSILON;
-    double epsilon = 1;
-    uint32_t no_of_conns = 0, no_of_nodes = DEFAULT_NODES;
+    int packet_size = 9000;
+    uint32_t no_of_conns = 0, cwnd = 15, no_of_nodes = DEFAULT_NODES;
+    uint32_t tiers = 3;
+    double logtime = 0.25;
     stringstream filename(ios_base::out);
+    simtime_picosec hop_latency = timeFromUs((uint32_t)1);
+    simtime_picosec switch_latency = timeFromUs((uint32_t)0);
+    queue_type qt = COMPOSITE;
 
+    bool log_sink = false;
+    bool log_tor_downqueue = false;
+    bool log_tor_upqueue = false;
+    bool log_traffic = false;
+    bool log_switches = false;
+    bool log_queue_usage = false;
+    RouteStrategy route_strategy = NOT_SET;
+    int seed = 13;
     int i = 1;
-    filename << "logout.dat";
 
-    while (i<argc) {
-        if (!strcmp(argv[i],"-o")){
+    filename << "logout.dat";
+    int end_time = 1000; // microseconds
+
+    queue_type snd_type = FAIR_PRIO;
+
+    char* tm_file = NULL;
+    char* topo_file = NULL;
+
+    while (i < argc) {
+        if (!strcmp(argv[i], "-o")) {
             filename.str(std::string());
             filename << argv[i+1];
             i++;
-        }
-        else if (!strcmp(argv[i],"-sub")){
-            subflow_count = atoi(argv[i+1]);
-            i++;
-        } else if (!strcmp(argv[i],"-conns")){
+        } else if (!strcmp(argv[i], "-conns")) {
             no_of_conns = atoi(argv[i+1]);
-            cout << "no_of_conns "<<no_of_conns << endl;
+            cout << "no_of_conns " << no_of_conns << endl;
             i++;
-        } else if (!strcmp(argv[i],"-nodes")){
+        } else if (!strcmp(argv[i], "-end")) {
+            end_time = atoi(argv[i+1]);
+            cout << "endtime(us) " << end_time << endl;
+            i++;
+        } else if (!strcmp(argv[i], "-nodes")) {
             no_of_nodes = atoi(argv[i+1]);
-            cout << "no_of_nodes "<<no_of_nodes << endl;
+            cout << "no_of_nodes " << no_of_nodes << endl;
             i++;
-        } else if (!strcmp(argv[i], "UNCOUPLED"))
-            algo = UNCOUPLED;
-        else if (!strcmp(argv[i], "COUPLED_INC"))
-            algo = COUPLED_INC;
-        else if (!strcmp(argv[i], "FULLY_COUPLED"))
-            algo = FULLY_COUPLED;
-        else if (!strcmp(argv[i], "COUPLED_TCP"))
-            algo = COUPLED_TCP;
-        else if (!strcmp(argv[i], "COUPLED_SCALABLE_TCP"))
-            algo = COUPLED_SCALABLE_TCP;
-        else if (!strcmp(argv[i], "COUPLED_EPSILON")) {
-            algo = COUPLED_EPSILON;
-            if (argc > i+1){
-                epsilon = atof(argv[i+1]);
-                i++;
+        } else if (!strcmp(argv[i], "-tiers")) {
+            tiers = atoi(argv[i+1]);
+            cout << "tiers " << tiers << endl;
+            assert(tiers == 2 || tiers == 3);
+            i++;
+        } else if (!strcmp(argv[i], "-queue_type")) {
+            if (!strcmp(argv[i+1], "composite")) {
+                qt = COMPOSITE;
+            } else if (!strcmp(argv[i+1], "composite_ecn")) {
+                qt = COMPOSITE_ECN;
+            } else if (!strcmp(argv[i+1], "lossless")) {
+                qt = LOSSLESS;
+            } else if (!strcmp(argv[i+1], "lossless_input")) {
+                qt = LOSSLESS_INPUT;
+            } else {
+                cout << "Unknown queue type " << argv[i+1] << endl;
+                exit_error(argv[0]);
             }
-            printf("Using epsilon %f\n", epsilon);
-        } else
+            i++;
+        } else if (!strcmp(argv[i], "-host_queue_type")) {
+            if (!strcmp(argv[i+1], "prio")) {
+                snd_type = PRIORITY;
+            } else if (!strcmp(argv[i+1], "fair_prio")) {
+                snd_type = FAIR_PRIO;
+            } else {
+                cout << "Unknown host queue type " << argv[i+1] << endl;
+                exit_error(argv[0]);
+            }
+            i++;
+        } else if (!strcmp(argv[i], "-log")) {
+            if (!strcmp(argv[i+1], "sink")) {
+                log_sink = true;
+            } else if (!strcmp(argv[i+1], "tor_downqueue")) {
+                log_tor_downqueue = true;
+            } else if (!strcmp(argv[i+1], "tor_upqueue")) {
+                log_tor_upqueue = true;
+            } else if (!strcmp(argv[i+1], "switch")) {
+                log_switches = true;
+            } else if (!strcmp(argv[i+1], "traffic")) {
+                log_traffic = true;
+            } else if (!strcmp(argv[i+1], "queue_usage")) {
+                log_queue_usage = true;
+            } else {
+                exit_error(argv[0]);
+            }
+            i++;
+        } else if (!strcmp(argv[i], "-cwnd")) {
+            cwnd = atoi(argv[i+1]);
+            cout << "cwnd " << cwnd << endl;
+            i++;
+        } else if (!strcmp(argv[i], "-tm")) {
+            tm_file = argv[i+1];
+            cout << "traffic matrix input file: " << tm_file << endl;
+            i++;
+        } else if (!strcmp(argv[i], "-topo")) {
+            topo_file = argv[i+1];
+            i++;
+        } else if (!strcmp(argv[i], "-q")) {
+            queuesize = atoi(argv[i+1]);
+            i++;
+        } else if (!strcmp(argv[i], "-logtime")) {
+            logtime = atof(argv[i+1]);
+            i++;
+        } else if (!strcmp(argv[i], "-linkspeed")) {
+            linkspeed = speedFromMbps(atof(argv[i+1]));
+            i++;
+        } else if (!strcmp(argv[i], "-seed")) {
+            seed = atoi(argv[i+1]);
+            cout << "random seed " << seed << endl;
+            i++;
+        } else if (!strcmp(argv[i], "-mtu")) {
+            packet_size = atoi(argv[i+1]);
+            i++;
+        } else if (!strcmp(argv[i], "-hop_latency")) {
+            hop_latency = timeFromUs(atof(argv[i+1]));
+            i++;
+        } else if (!strcmp(argv[i], "-switch_latency")) {
+            switch_latency = timeFromUs(atof(argv[i+1]));
+            i++;
+        } else if (!strcmp(argv[i], "-strat")) {
+            if (!strcmp(argv[i+1], "single")) {
+                route_strategy = SINGLE_PATH;
+            } else if (!strcmp(argv[i+1], "ecmp_host")) {
+                route_strategy = ECMP_FIB;
+                FatTreeSwitch::set_strategy(FatTreeSwitch::ECMP);
+            } else {
+                cout << "Unknown strategy " << argv[i+1]
+                     << " for TCP. Valid values: single, ecmp_host" << endl;
+                exit_error(argv[0]);
+            }
+            i++;
+        } else {
+            cout << "Unknown parameter " << argv[i] << endl;
             exit_error(argv[0]);
-
+        }
         i++;
     }
-    srand(time(NULL));
-      
-    cout << "Using subflow count " << subflow_count <<endl;
-    cout << "conns " << no_of_conns << endl;
-    cout << "requested nodes " << no_of_nodes << endl;
 
-      
-    cout <<  "Using algo="<<algo<< " epsilon=" << epsilon << endl;
-    // prepare the loggers
+    srand(seed);
+    srandom(seed);
+    cout << "Parsed args" << endl;
+    Packet::set_packet_size(packet_size);
 
-    cout << "Logging to " << filename.str() << endl;
-    //Logfile 
-    Logfile logfile(filename.str(), eventlist);
+    eventlist.setEndtime(timeFromUs((uint32_t)end_time));
+    queuesize = memFromPkt(queuesize);
 
-#if PRINT_PATHS
-    filename << ".paths";
-    cout << "Logging path choices to " << filename.str() << endl;
-    std::ofstream paths(filename.str().c_str());
-    if (!paths){
-        cout << "Can't open for writing paths file!"<<endl;
+    if (route_strategy == NOT_SET) {
+        fprintf(stderr, "Route Strategy not set. Use -strat ecmp_host or -strat single\n");
         exit(1);
     }
-#endif
 
-
-    uint32_t tot_subs = 0;
-    uint32_t cnt_con = 0;
-
+    cout << "Logging to " << filename.str() << endl;
+    Logfile logfile(filename.str(), eventlist);
+    cout << "Linkspeed set to " << linkspeed/1000000000 << "Gbps" << endl;
     logfile.setStartTime(timeFromSec(0));
 
-    TcpSinkLoggerSampling sinkLogger = TcpSinkLoggerSampling(timeFromMs(1000), eventlist);
-    logfile.addLogger(sinkLogger);
-
-    //TcpLoggerSimple logTcp;logfile.addLogger(logTcp);
-
+    TcpSinkLoggerSampling sinkLogger(timeFromMs(logtime), eventlist);
+    if (log_sink) {
+        logfile.addLogger(sinkLogger);
+    }
+    TcpTrafficLogger traffic_logger;
+    if (log_traffic) {
+        logfile.addLogger(traffic_logger);
+    }
 
     TcpSrc* tcpSrc;
     TcpSink* tcpSnk;
 
-    //CbrSrc* cbrSrc;
-    //CbrSink* cbrSnk;
-
     Route* routeout, *routein;
-    double extrastarttime;
 
     TcpRtxTimerScanner tcpRtxScanner(timeFromMs(10), eventlist);
-   
-    MultipathTcpSrc* mtcp;
-    
-    uint32_t dest;
 
-    QueueLoggerFactory qlf(&logfile, QueueLoggerFactory::LOGGER_SAMPLING, eventlist);
-    qlf.set_sample_period(timeFromUs(1000.0));
-
-#if USE_FIRST_FIT
-    if (subflow_count==1){
-        ff = new FirstFit(timeFromMs(FIRST_FIT_INTERVAL),eventlist);
+    QueueLoggerFactory* qlf = NULL;
+    if (log_tor_downqueue || log_tor_upqueue) {
+        qlf = new QueueLoggerFactory(&logfile, QueueLoggerFactory::LOGGER_SAMPLING, eventlist);
+        qlf->set_sample_period(timeFromUs(10.0));
+    } else if (log_queue_usage) {
+        qlf = new QueueLoggerFactory(&logfile, QueueLoggerFactory::LOGGER_EMPTY, eventlist);
+        qlf->set_sample_period(timeFromUs(10.0));
     }
-#endif
 
-#ifdef FAT_TREE
-    FatTreeTopology* top = new FatTreeTopology(no_of_nodes, linkspeed, memFromPkt(8), &qlf, &eventlist,ff,RANDOM,0);
-#endif
+    FatTreeTopology* top;
+    if (topo_file) {
+        top = FatTreeTopology::load(topo_file, qlf, eventlist, queuesize, qt, snd_type);
+    } else {
+        FatTreeTopology::set_tiers(tiers);
+        top = new FatTreeTopology(no_of_nodes, linkspeed, queuesize, qlf,
+                                  &eventlist, NULL, qt, hop_latency,
+                                  switch_latency, snd_type);
+    }
 
-#ifdef OV_FAT_TREE
-    OversubscribedFatTreeTopology* top = new OversubscribedFatTreeTopology(&logfile, &eventlist,ff);
-#endif
+    if (log_switches) {
+        top->add_switch_loggers(logfile, timeFromUs(20.0));
+    }
 
-#ifdef MH_FAT_TREE
-    MultihomedFatTreeTopology* top = new MultihomedFatTreeTopology(&logfile, &eventlist,ff);
-#endif
-
-#ifdef STAR
-    StarTopology* top = new StarTopology(&logfile, &eventlist,ff);
-#endif
-
-#ifdef BCUBE
-    BCubeTopology* top = new BCubeTopology(&logfile,&eventlist,ff);
-    cout << "BCUBE " << K << endl;
-#endif
-
-#ifdef VL2
-    VL2Topology* top = new VL2Topology(&logfile,&eventlist,ff);
-#endif
     no_of_nodes = top->no_of_nodes();
     cout << "actual nodes " << no_of_nodes << endl;
 
     vector<const Route*>*** net_paths;
     net_paths = new vector<const Route*>**[no_of_nodes];
 
+    int** path_refcounts;
+    path_refcounts = new int*[no_of_nodes];
+
     int* is_dest = new int[no_of_nodes];
-    
-    for (uint32_t i=0;i<no_of_nodes;i++){
-        is_dest[i] = 0;
-        net_paths[i] = new vector<const Route*>*[no_of_nodes];
-        for (uint32_t j = 0;j<no_of_nodes;j++)
-            net_paths[i][j] = NULL;
-    }
-    
-    if (ff)
-        ff->net_paths = net_paths;
-    
-    vector<uint32_t>* destinations;
 
-    // Permutation connections
-    ConnectionMatrix* conns = new ConnectionMatrix(no_of_nodes);
-    //conns->setLocalTraffic(top);
-
-    
-    cout << "Running perm with " << no_of_conns << " connections" << endl;
-    conns->setPermutation(no_of_conns);
-    //conns->setStaggeredPermutation(top,(double)no_of_conns/100.0);
-    //conns->setStaggeredRandom(top,512,1);
-    //conns->setHotspot(no_of_conns,512/no_of_conns);
-    //conns->setManytoMany(128);
-
-    //conns->setVL2();
-
-
-    //conns->setRandom(no_of_conns);
-
-    map<uint32_t, vector<uint32_t>*>::iterator it;
-    
-    uint32_t connID = 0;
-    for (it = conns->connections.begin(); it!=conns->connections.end();it++){
-        uint32_t src = (*it).first;
-        destinations = (*it).second;
-
-        vector<int> subflows_chosen;
-      
-        for (uint32_t dst_id = 0;dst_id<destinations->size();dst_id++){
-            connID++;
-            dest = destinations->at(dst_id);
-            if (!net_paths[src][dest])
-                net_paths[src][dest] = top->get_paths(src,dest);
-
-            /*bool cbr = 1;
-              if (cbr){
-              cbrSrc = new CbrSrc(eventlist,speedFromPktps(7999),timeFromMs(0),timeFromMs(0));
-              cbrSnk = new CbrSink();
-              
-              cbrSrc->setName("cbr_" + ntoa(src) + "_" + ntoa(dest)+"_"+ntoa(dst_id));
-              logfile.writeName(*cbrSrc);
-              
-              cbrSnk->setName("cbr_sink_" + ntoa(src) + "_" + ntoa(dest)+"_"+ntoa(dst_id));
-              logfile.writeName(*cbrSnk);
-              
-              // tell it the route
-              if (net_paths[src][dest]->size()==1){
-              choice = 0;
-              }
-              else {
-              choice = rand()%net_paths[src][dest]->size();
-              }
-              
-              routeout = new Route(*(net_paths[src][dest]->at(choice)));
-              routeout->push_back(cbrSnk);
-          
-              cbrSrc->connect(*routeout, *cbrSnk, timeFromMs(0));
-              }*/
-        
-            {
-                //we should create multiple connections. How many?
-                //if (connID%3!=0)
-                //continue;
-
-                for (uint32_t connection=0;connection<1;connection++){
-                    //            if (algo == COUPLED_EPSILON)
-                    //mtcp = new MultipathTcpSrc(algo, eventlist, NULL, epsilon);
-                    //else
-                    mtcp = new MultipathTcpSrc(algo, eventlist, NULL);
-            
-                    //uint64_t bb = generateFlowSize();
-
-                    //            if (subflow_control)
-                    //subflow_control->add_flow(src,dest,mtcp);
-
-                    subflows_chosen.clear();
-
-                    uint32_t it_sub;
-                    size_t crt_subflow_count = subflow_count;
-                    tot_subs += crt_subflow_count;
-                    cnt_con ++;
-
-                    it_sub = crt_subflow_count > net_paths[src][dest]->size()?net_paths[src][dest]->size():crt_subflow_count;
-
-#ifdef MH_FAT_TREE
-                    int use_all = it_sub==net_paths[src][dest]->size();
-#endif
-                    //if (connID%10!=0)
-                    //it_sub = 1;
-            
-                    for (uint32_t inter = 0; inter < it_sub; inter++) {
-                        //              if (connID%10==0){
-                        tcpSrc = new TcpSrc(NULL, NULL, eventlist);
-                        tcpSnk = new TcpSink();
-                        /*}
-                          else {
-                          tcpSrc = new TcpSrcTransfer(NULL,NULL,eventlist,bb,net_paths[src][dest]);
-                          tcpSnk = new TcpSinkTransfer();
-                          }*/
-
-                        //if (connection==1)
-                        //tcpSrc->set_app_limit(9000);
-              
-                        tcpSrc->setName("mtcp_" + ntoa(src) + "_" + ntoa(inter) + "_" + ntoa(dest)+"("+ntoa(connection)+")");
-                        logfile.writeName(*tcpSrc);
-              
-                        tcpSnk->setName("mtcp_sink_" + ntoa(src) + "_" + ntoa(inter) + "_" + ntoa(dest)+ "("+ntoa(connection)+")");
-                        logfile.writeName(*tcpSnk);
-              
-                        tcpRtxScanner.registerTcp(*tcpSrc);
-
-                        /*int found;
-                          do {
-                          found = 0;
-                
-                          //if (net_paths[src][dest]->size()==K*K/4 && it_sub <= K/2)
-                          //choice = rand()%(K/2);
-                          //else 
-                          choice = rand()%net_paths[src][dest]->size();
-                
-                          for (uint32_t cnt = 0;cnt<subflows_chosen.size();cnt++){
-                          if (subflows_chosen.at(cnt)==choice){
-                          found = 1;
-                          break;
-                          }
-                          }
-                          }while(found);
-                        //*/
-                        size_t choice = 0;
-
-#ifdef FAT_TREE
-                        choice = rand()%net_paths[src][dest]->size();
-#endif
-
-#ifdef OV_FAT_TREE
-                        choice = rand()%net_paths[src][dest]->size();
-#endif
-
-#ifdef MH_FAT_TREE
-                        if (use_all)
-                            choice = inter;
-                        else
-                            choice = rand()%net_paths[src][dest]->size();
-#endif
-
-#ifdef VL2
-                        choice = rand()%net_paths[src][dest]->size();
-#endif
-
-#ifdef STAR
-                        choice = 0;
-#endif
-
-#ifdef BCUBE
-                        //choice = inter;
-
-                        int min = -1, max = -1,minDist = 1000,maxDist = 0;
-                        if (subflow_count==1){
-                            //find shortest and longest path 
-                            for (uint32_t dd=0;dd<net_paths[src][dest]->size();dd++){
-                                if (net_paths[src][dest]->at(dd)->size()<minDist){
-                                    minDist = net_paths[src][dest]->at(dd)->size();
-                                    min = dd;
-                                }
-                                if (net_paths[src][dest]->at(dd)->size()>maxDist){
-                                    maxDist = net_paths[src][dest]->at(dd)->size();
-                                    max = dd;
-                                }
-                            }
-                            choice = min;
-                        } else
-                            choice = rand()%net_paths[src][dest]->size();
-#endif
-                        //cout << "Choice "<<choice<<" out of "<<net_paths[src][dest]->size();
-                        subflows_chosen.push_back(choice);
-
-                        /*if (net_paths[src][dest]->size()==K*K/4 && it_sub<=K/2){
-                          uint32_t choice2 = rand()%(K/2);*/
-
-                        if (choice>=net_paths[src][dest]->size()){
-                            printf("Weird path choice %lu out of %lu\n",choice,net_paths[src][dest]->size());
-                            exit(1);
-                        }
-                
-#if PRINT_PATHS
-                        paths << "Route from "<< ntoa(src) << " to " << ntoa(dest) << "  (" << choice << ") -> " ;
-                        print_path(paths,net_paths[src][dest]->at(choice));
-#endif
-
-                        routeout = new Route(*(net_paths[src][dest]->at(choice)));
-                        routeout->push_back(tcpSnk);
-              
-                        routein = new Route();
-                        routein->push_back(tcpSrc);
-                        extrastarttime = 0 * drand();
-            
-                        //join multipath connection
-              
-                        mtcp->addSubflow(tcpSrc);
-              
-                        if (inter == 0) {
-                            mtcp->setName("multipath" + ntoa(src) + "_" + ntoa(dest)+"("+ntoa(connection)+")");
-                            logfile.writeName(*mtcp);
-                        }
-              
-                        tcpSrc->connect(*routeout, *routein, *tcpSnk, timeFromMs(extrastarttime));
-            
-#ifdef PACKET_SCATTER
-                        tcpSrc->set_paths(net_paths[src][dest]);
-                        cout << "Using PACKET SCATTER!!!!"<<endl;
-#endif
-              
-                        if (ff&&!inter)
-                            ff->add_flow(src,dest,tcpSrc);
-              
-                        sinkLogger.monitorMultipathSink(tcpSnk);
-                    }
-                }
-            }
+    for (size_t s = 0; s < no_of_nodes; s++) {
+        is_dest[s] = 0;
+        net_paths[s] = new vector<const Route*>*[no_of_nodes];
+        path_refcounts[s] = new int[no_of_nodes];
+        for (size_t d = 0; d < no_of_nodes; d++) {
+            net_paths[s][d] = NULL;
+            path_refcounts[s][d] = 0;
         }
     }
-    //    ShortFlows* sf = new ShortFlows(2560, eventlist, net_paths,conns,lg, &tcpRtxScanner);
 
-    cout << "Mean number of subflows " << ntoa((double)tot_subs/cnt_con)<<endl;
+    ConnectionMatrix* conns = new ConnectionMatrix(no_of_nodes);
 
-    // Record the setup
+    if (tm_file) {
+        cout << "Loading connection matrix from " << tm_file << endl;
+        if (!conns->load(tm_file)) {
+            cout << "Failed to load connection matrix " << tm_file << endl;
+            exit(-1);
+        }
+    } else if (no_of_conns > 0) {
+        cout << "Running permutation with " << no_of_conns << " connections" << endl;
+        conns->setPermutation(no_of_conns);
+    } else {
+        cout << "Loading connection matrix from standard input" << endl;
+        conns->load(cin);
+    }
+
+    if (conns->N != no_of_nodes) {
+        cout << "Connection matrix number of nodes is " << conns->N
+             << " while I am using " << no_of_nodes << endl;
+        exit(-1);
+    }
+
+    for (size_t c = 0; c < conns->failures.size(); c++) {
+        failure* crt = conns->failures.at(c);
+        cout << "Adding link failure switch type " << crt->switch_type
+             << " Switch ID " << crt->switch_id
+             << " link ID " << crt->link_id << endl;
+        top->add_failed_link(crt->switch_type, crt->switch_id, crt->link_id);
+    }
+
+    vector<connection*>* all_conns = conns->getAllConnections();
+
+    // Pre-populate paths for SINGLE_PATH strategy
+    for (size_t c = 0; c < all_conns->size(); c++) {
+        connection* crt = all_conns->at(c);
+        int src = crt->src;
+        int dest = crt->dst;
+        path_refcounts[src][dest]++;
+        path_refcounts[dest][src]++;
+
+        if (route_strategy == SINGLE_PATH) {
+            if (!net_paths[src][dest])
+                net_paths[src][dest] = top->get_paths(src, dest);
+            if (!net_paths[dest][src])
+                net_paths[dest][src] = top->get_paths(dest, src);
+        }
+    }
+
+    for (size_t c = 0; c < all_conns->size(); c++) {
+        connection* crt = all_conns->at(c);
+        int src = crt->src;
+        int dest = crt->dst;
+
+        tcpSrc = new TcpSrc(NULL, NULL, eventlist);
+        tcpSrc->set_cwnd(cwnd * Packet::data_packet_size());
+        tcpSnk = new TcpSink();
+
+        tcpSrc->setName("tcp_" + ntoa(src) + "_" + ntoa(dest));
+        logfile.writeName(*tcpSrc);
+
+        tcpSnk->setName("tcp_sink_" + ntoa(src) + "_" + ntoa(dest));
+        logfile.writeName(*tcpSnk);
+
+        if (crt->size > 0)
+            tcpSrc->set_flowsize(crt->size);
+
+        tcpRtxScanner.registerTcp(*tcpSrc);
+
+        switch (route_strategy) {
+        case ECMP_FIB:
+            {
+                tcpSrc->set_dst(dest);
+                tcpSnk->set_dst(src);
+
+                Route* srctotor = new Route();
+                srctotor->push_back(top->queues_ns_nlp[src][top->HOST_POD_SWITCH(src)][0]);
+                srctotor->push_back(top->pipes_ns_nlp[src][top->HOST_POD_SWITCH(src)][0]);
+                srctotor->push_back(top->queues_ns_nlp[src][top->HOST_POD_SWITCH(src)][0]->getRemoteEndpoint());
+
+                Route* dsttotor = new Route();
+                dsttotor->push_back(top->queues_ns_nlp[dest][top->HOST_POD_SWITCH(dest)][0]);
+                dsttotor->push_back(top->pipes_ns_nlp[dest][top->HOST_POD_SWITCH(dest)][0]);
+                dsttotor->push_back(top->queues_ns_nlp[dest][top->HOST_POD_SWITCH(dest)][0]->getRemoteEndpoint());
+
+                tcpSrc->connect(*srctotor, *dsttotor, *tcpSnk, crt->start);
+
+                assert(top->switches_lp[top->HOST_POD_SWITCH(src)]);
+                assert(top->switches_lp[top->HOST_POD_SWITCH(dest)]);
+                top->switches_lp[top->HOST_POD_SWITCH(src)]->addHostPort(src, tcpSrc->getFlowId(), tcpSrc);
+                top->switches_lp[top->HOST_POD_SWITCH(dest)]->addHostPort(dest, tcpSrc->getFlowId(), tcpSnk);
+                break;
+            }
+        case SINGLE_PATH:
+            {
+                int choice = rand() % net_paths[src][dest]->size();
+                routeout = new Route(*(net_paths[src][dest]->at(choice)));
+                routeout->push_back(tcpSnk);
+
+                routein = new Route();
+                routein->push_back(tcpSrc);
+
+                tcpSrc->connect(*routeout, *routein, *tcpSnk, crt->start);
+                break;
+            }
+        default:
+            abort();
+        }
+
+        path_refcounts[src][dest]--;
+        path_refcounts[dest][src]--;
+
+        if (path_refcounts[src][dest] == 0 && net_paths[src][dest]) {
+            delete net_paths[src][dest];
+            net_paths[src][dest] = NULL;
+        }
+        if (path_refcounts[dest][src] == 0 && net_paths[dest][src]) {
+            delete net_paths[dest][src];
+            net_paths[dest][src] = NULL;
+        }
+
+        if (log_sink) {
+            sinkLogger.monitorSink(tcpSnk);
+        }
+    }
+
+    // Record setup metadata
     int pktsize = Packet::data_packet_size();
     logfile.write("# pktsize=" + ntoa(pktsize) + " bytes");
-    logfile.write("# subflows=" + ntoa(subflow_count));
     logfile.write("# hostnicrate = " + ntoa(linkspeed/1000000) + " Mbps");
-    logfile.write("# corelinkrate = " + ntoa(HOST_NIC*CORE_TO_HOST) + " pkt/sec");
-    //logfile.write("# buffer = " + ntoa((double) (queues_na_ni[0][1]->_maxsize) / ((double) pktsize)) + " pkt");
     double rtt = timeAsSec(timeFromUs(RTT));
     logfile.write("# rtt =" + ntoa(rtt));
 

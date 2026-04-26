@@ -18,5 +18,6 @@ fi
   fyp/dash_tests/test_cache_implementations.py \
   --cov=fyp.dash_scripts.cache_sim \
   --cov=fyp.dash_scripts.cache_sim_source_seen \
+  --cov=fyp.dash_scripts.cache_sim_congestion_int \
   --cov-report=term-missing \
   --cov-fail-under="$COVERAGE_MIN"

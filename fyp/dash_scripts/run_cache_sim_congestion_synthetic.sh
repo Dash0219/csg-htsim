@@ -7,28 +7,29 @@ Usage:
   bash fyp/dash_scripts/run_cache_sim_congestion_synthetic.sh [options]
 
 Options:
-  -d, --dataset NAME        Process one synthetic dataset family (example: a2a_pareto)
-  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: hpcc)
-  -f, --fast                Use the optimized cache simulator (default)
-      --no-fast             Disable the optimized cache simulator
-      --qs-threshold N      Queue-size anomaly threshold in bytes (default: 50000)
+  -d, --dataset NAME        Process one dataset or family shorthand (see below)
+  -p, --protocol NAME       Transport protocol: ndp, hpcc, or tcp (default: hpcc)
+  -f, --fast                (no-op for congestion sim; kept for interface consistency)
+      --no-fast
+      --range-threshold N   Forward when |new_qs - cached_qs| > N bytes (default: 8192)
       --key-level MODE      switch | flow (default: switch)
-      --signature MODE      seen | bucket (default: seen)
-      --bucket-bytes N      Bucket width when --signature bucket (default: 8192)
-      --range-threshold N   INTCollector-style range detection: forward only when
-                            |new_qs - cached_qs| > N bytes. 0 disables (default: 8192)
+      --capacity-plots      Generate capacity CSV and plots (default: off)
   -h, --help                Show this help
 
+Dataset family shorthands for --dataset:
+  incast_mono_n / a2a_mono_n                   all flow-size sweep datasets
+  incast_heavytail_burst_n / a2a_heavytail_burst_n   all burst sweep datasets (NDP only)
+  incast_pareto_alpha_n / a2a_pareto_alpha_n   all Pareto alpha sweep datasets
+  incast_heavytail_sigma_n / a2a_heavytail_sigma_n  all heavytail sigma sweep datasets
+  incast_heavytail_temp_n / a2a_heavytail_temp_n    all heavytail temporal sweep datasets
+
 Environment variables:
-  PROTOCOL             Equivalent to --protocol (ndp/hpcc)
-  FAST                 Equivalent to --fast (1/0, default: 1)
+  PROTOCOL             Equivalent to --protocol (ndp/hpcc/tcp)
   DATASET              Equivalent to --dataset
   TARGET_PATTERN       Deprecated legacy alias for DATASET
-  QS_THRESHOLD         Equivalent to --qs-threshold
-  KEY_LEVEL            Equivalent to --key-level
-  SIGNATURE_MODE       Equivalent to --signature
-  BUCKET_BYTES         Equivalent to --bucket-bytes
   RANGE_THRESHOLD      Equivalent to --range-threshold
+  KEY_LEVEL            Equivalent to --key-level
+  CAPACITY_PLOTS       Equivalent to --capacity-plots (1/0, default: 0)
 EOF
 }
 
@@ -36,16 +37,13 @@ DATASET="${DATASET:-}"
 TARGET_PATTERN="${TARGET_PATTERN:-}"
 LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
 PROTOCOL="${PROTOCOL:-hpcc}"
-FAST="${FAST:-1}"
-QS_THRESHOLD="${QS_THRESHOLD:-50000}"
-KEY_LEVEL="${KEY_LEVEL:-switch}"
-SIGNATURE_MODE="${SIGNATURE_MODE:-seen}"
-BUCKET_BYTES="${BUCKET_BYTES:-8192}"
 RANGE_THRESHOLD="${RANGE_THRESHOLD:-8192}"
+KEY_LEVEL="${KEY_LEVEL:-switch}"
+CAPACITY_PLOTS="${CAPACITY_PLOTS:-0}"
 
 is_supported_dataset_name() {
   local name="$1"
-  if [[ "$name" =~ ^(incast|a2a)_(mono|bimodal|pareto|exponential_skewed)$ ]]; then
+  if [[ "$name" =~ ^(incast|a2a)_(mono|bimodal|pareto|exponential_skewed|heavytail)$ ]]; then
     return 0
   fi
   if [[ "$name" =~ ^(incast|a2a)_mono_[0-9]+$ ]]; then
@@ -54,7 +52,10 @@ is_supported_dataset_name() {
   if [[ "$name" =~ ^(incast|a2a)_pareto_(alpha|temp)_[0-9]+(p[0-9]+)?$ ]]; then
     return 0
   fi
-  if [[ "$name" =~ ^(incast|a2a)_mono_burst_[0-9]+$ ]]; then
+  if [[ "$name" =~ ^(incast|a2a)_heavytail_(sigma|temp)_[0-9]+(p[0-9]+)?$ ]]; then
+    return 0
+  fi
+  if [[ "$name" =~ ^(incast|a2a)_heavytail_burst_[0-9]+$ ]]; then
     return 0
   fi
   return 1
@@ -62,84 +63,40 @@ is_supported_dataset_name() {
 
 is_base_dataset_name() {
   local name="$1"
-  [[ "$name" =~ ^(incast|a2a)_(mono|bimodal|pareto|exponential_skewed)$ ]]
+  [[ "$name" =~ ^(incast|a2a)_(mono|bimodal|pareto|exponential_skewed|heavytail)$ ]]
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d|--dataset)
       if [[ $# -lt 2 ]]; then
-        echo "ERROR: --dataset requires a value" >&2
-        exit 1
+        echo "ERROR: --dataset requires a value" >&2; exit 1
       fi
-      DATASET="$2"
-      shift 2
-      ;;
+      DATASET="$2"; shift 2 ;;
     -p|--protocol)
       if [[ $# -lt 2 ]]; then
-        echo "ERROR: --protocol requires a value" >&2
-        exit 1
+        echo "ERROR: --protocol requires a value" >&2; exit 1
       fi
-      PROTOCOL="$2"
-      shift 2
-      ;;
-    -f|--fast)
-      FAST=1
-      shift
-      ;;
-    --no-fast)
-      FAST=0
-      shift
-      ;;
-    --qs-threshold)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --qs-threshold requires a value" >&2
-        exit 1
-      fi
-      QS_THRESHOLD="$2"
-      shift 2
-      ;;
-    --key-level)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --key-level requires a value" >&2
-        exit 1
-      fi
-      KEY_LEVEL="$2"
-      shift 2
-      ;;
-    --signature)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --signature requires a value" >&2
-        exit 1
-      fi
-      SIGNATURE_MODE="$2"
-      shift 2
-      ;;
-    --bucket-bytes)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --bucket-bytes requires a value" >&2
-        exit 1
-      fi
-      BUCKET_BYTES="$2"
-      shift 2
-      ;;
+      PROTOCOL="$2"; shift 2 ;;
+    -f|--fast|--no-fast)
+      shift ;;
     --range-threshold)
       if [[ $# -lt 2 ]]; then
-        echo "ERROR: --range-threshold requires a value" >&2
-        exit 1
+        echo "ERROR: --range-threshold requires a value" >&2; exit 1
       fi
-      RANGE_THRESHOLD="$2"
-      shift 2
-      ;;
+      RANGE_THRESHOLD="$2"; shift 2 ;;
+    --key-level)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --key-level requires a value" >&2; exit 1
+      fi
+      KEY_LEVEL="$2"; shift 2 ;;
+    --capacity-plots)
+      CAPACITY_PLOTS=1; shift ;;
     -h|--help)
-      print_usage
-      exit 0
-      ;;
+      print_usage; exit 0 ;;
     *)
       echo "ERROR: unknown argument: $1" >&2
-      print_usage
-      exit 1
-      ;;
+      print_usage; exit 1 ;;
   esac
 done
 
@@ -154,25 +111,17 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
-  echo "ERROR: --protocol must be ndp or hpcc" >&2
-  exit 1
+if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" && "$PROTOCOL" != "tcp" ]]; then
+  echo "ERROR: --protocol must be ndp, hpcc, or tcp" >&2; exit 1
 fi
 if [[ "$KEY_LEVEL" != "switch" && "$KEY_LEVEL" != "flow" ]]; then
-  echo "ERROR: --key-level must be switch or flow" >&2
-  exit 1
-fi
-if [[ "$SIGNATURE_MODE" != "seen" && "$SIGNATURE_MODE" != "bucket" ]]; then
-  echo "ERROR: --signature must be seen or bucket" >&2
-  exit 1
+  echo "ERROR: --key-level must be switch or flow" >&2; exit 1
 fi
 if ! [[ "$RANGE_THRESHOLD" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: --range-threshold must be a non-negative integer" >&2
-  exit 1
+  echo "ERROR: --range-threshold must be a non-negative integer" >&2; exit 1
 fi
-if [[ "$RANGE_THRESHOLD" != "0" && "$KEY_LEVEL" != "switch" ]]; then
-  echo "ERROR: --range-threshold requires --key-level switch" >&2
-  exit 1
+if [[ "$CAPACITY_PLOTS" != "0" && "$CAPACITY_PLOTS" != "1" ]]; then
+  echo "ERROR: CAPACITY_PLOTS must be 0 or 1" >&2; exit 1
 fi
 
 OUT_DIR="fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/congestion"
@@ -189,49 +138,45 @@ is_low_dataset_name() {
 }
 
 if [[ "$LOW_TEMP_LOCALITY" != "0" && "$LOW_TEMP_LOCALITY" != "1" ]]; then
-  echo "ERROR: LOW_TEMP_LOCALITY must be 0 or 1" >&2
-  exit 1
-fi
-
-if [[ "$FAST" != "0" && "$FAST" != "1" ]]; then
-  echo "ERROR: FAST must be 0 or 1" >&2
-  exit 1
-fi
-
-if [[ "$LOW_TEMP_LOCALITY" == "1" && -n "$DATASET" ]] && ! is_low_dataset_name "$DATASET" && is_base_dataset_name "$DATASET"; then
-  DATASET="${DATASET}_${LOW_TEMP_SUFFIX}"
-fi
-
-if [[ "$LOW_TEMP_LOCALITY" == "0" && -n "$DATASET" ]] && is_low_dataset_name "$DATASET"; then
-  LOW_TEMP_LOCALITY=1
+  echo "ERROR: LOW_TEMP_LOCALITY must be 0 or 1" >&2; exit 1
 fi
 
 normalize_dataset_alias() {
   local name="$1"
   case "$name" in
-    incast)
-      echo "incast_mono"
-      ;;
-    a2a)
-      echo "a2a_mono"
-      ;;
-    incast_${LOW_TEMP_SUFFIX})
-      echo "incast_mono_${LOW_TEMP_SUFFIX}"
-      ;;
-    a2a_${LOW_TEMP_SUFFIX})
-      echo "a2a_mono_${LOW_TEMP_SUFFIX}"
-      ;;
-    *)
-      echo "$name"
-      ;;
+    incast)                        echo "incast_mono" ;;
+    a2a)                           echo "a2a_mono" ;;
+    incast_${LOW_TEMP_SUFFIX})     echo "incast_mono_${LOW_TEMP_SUFFIX}" ;;
+    a2a_${LOW_TEMP_SUFFIX})        echo "a2a_mono_${LOW_TEMP_SUFFIX}" ;;
+    *)                             echo "$name" ;;
   esac
 }
 
 if [[ -n "$DATASET" ]]; then
   DATASET="$(normalize_dataset_alias "$DATASET")"
+fi
+
+# Expand family shorthands
+FAMILY_PREFIX=""
+if [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_mono_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_mono_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_burst_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_burst_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_pareto_alpha_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_pareto_alpha_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_sigma_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_sigma_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_temp_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_temp_"; DATASET=""
+elif [[ -n "$DATASET" ]]; then
+  if [[ "$LOW_TEMP_LOCALITY" == "1" ]] && ! is_low_dataset_name "$DATASET" && is_base_dataset_name "$DATASET"; then
+    DATASET="${DATASET}_${LOW_TEMP_SUFFIX}"
+  fi
+  if [[ "$LOW_TEMP_LOCALITY" == "0" ]] && is_low_dataset_name "$DATASET"; then
+    LOW_TEMP_LOCALITY=1
+  fi
   if ! is_supported_dataset_name "$DATASET"; then
-    echo "ERROR: unsupported synthetic dataset '$DATASET' for redesigned suite" >&2
-    exit 1
+    echo "ERROR: unsupported synthetic dataset '$DATASET'" >&2; exit 1
   fi
 fi
 
@@ -240,12 +185,19 @@ mkdir -p "$OUT_DIR" "$CAPACITY_DIR" "$CAPACITY_PLOTS_DIR"
 patterns=()
 if [[ -n "$DATASET" ]]; then
   patterns=("$DATASET")
+elif [[ -n "$FAMILY_PREFIX" ]]; then
+  while IFS= read -r log; do
+    [[ -n "$log" ]] || continue
+    name="$(basename "$log")"
+    name="${name#log_}"; name="${name%.txt}"
+    is_supported_dataset_name "$name" || continue
+    patterns+=("$name")
+  done < <(find "$LOG_ROOT" -maxdepth 1 -type f -name "log_${FAMILY_PREFIX}*.txt" | sort)
 else
   while IFS= read -r log; do
     [[ -n "$log" ]] || continue
     name="$(basename "$log")"
-    name="${name#log_}"
-    name="${name%.txt}"
+    name="${name#log_}"; name="${name%.txt}"
     is_supported_dataset_name "$name" || continue
     if [[ "$LOW_TEMP_LOCALITY" == "1" ]]; then
       is_low_dataset_name "$name" || continue
@@ -257,49 +209,36 @@ else
 fi
 
 for p in "${patterns[@]}"; do
-  if [[ -n "$DATASET" && "$p" != "$DATASET" ]]; then
-    continue
-  fi
-  dataset_plots_dir="${CAPACITY_PLOTS_DIR}/${p}"
-  mkdir -p "$dataset_plots_dir"
   log="$LOG_ROOT/log_${p}.txt"
   csv="$OUT_DIR/results_synthetic_congestion_${p}.csv"
-  capacity_csv="$CAPACITY_DIR/results_synthetic_congestion_${p}_capacity.csv"
   if [[ ! -f "$log" ]]; then
     echo "Skipping missing input: $log"
     continue
   fi
   echo "== congestion INT sweep: $p =="
-  if [[ "$FAST" == "1" ]]; then
-    python3 fyp/dash_scripts/cache_sim_congestion_int.py "$log" \
-      --sweep \
-      --fast \
-      --quiet-table \
-      --qs-threshold "$QS_THRESHOLD" \
-      --key-level "$KEY_LEVEL" \
-      --signature "$SIGNATURE_MODE" \
-      --bucket-bytes "$BUCKET_BYTES" \
-      --range-threshold "$RANGE_THRESHOLD" \
-      --csv "$csv" \
-      --capacity-csv "$capacity_csv"
-  else
-    python3 fyp/dash_scripts/cache_sim_congestion_int.py "$log" \
-      --sweep \
-      --quiet-table \
-      --qs-threshold "$QS_THRESHOLD" \
-      --key-level "$KEY_LEVEL" \
-      --signature "$SIGNATURE_MODE" \
-      --bucket-bytes "$BUCKET_BYTES" \
-      --range-threshold "$RANGE_THRESHOLD" \
-      --csv "$csv" \
-      --capacity-csv "$capacity_csv"
-  fi
 
-  plot_cmd=(python3 fyp/dash_scripts/plot_cache_capacity.py "$capacity_csv" --out-dir "$dataset_plots_dir" --prefix "synthetic_congestion_${p}_capacity" --min-capacity "$CAPACITY_PLOT_MIN_CAPACITY")
-  if [[ -n "$CAPACITY_PLOT_CAPACITIES" ]]; then
-    plot_cmd+=(--capacities "$CAPACITY_PLOT_CAPACITIES")
+  sim_cmd=(python3 fyp/dash_scripts/cache_sim_congestion_int.py "$log"
+    --sweep
+    --quiet-table
+    --range-threshold "$RANGE_THRESHOLD"
+    --key-level "$KEY_LEVEL"
+    --csv "$csv")
+
+  if [[ "$CAPACITY_PLOTS" == "1" ]]; then
+    capacity_csv="$CAPACITY_DIR/results_synthetic_congestion_${p}_capacity.csv"
+    dataset_plots_dir="${CAPACITY_PLOTS_DIR}/${p}"
+    mkdir -p "$dataset_plots_dir"
+    sim_cmd+=(--capacity-csv "$capacity_csv")
+    "${sim_cmd[@]}"
+    plot_cmd=(python3 fyp/dash_scripts/plot_cache_capacity.py "$capacity_csv"
+      --out-dir "$dataset_plots_dir"
+      --prefix "synthetic_congestion_${p}_capacity"
+      --min-capacity "$CAPACITY_PLOT_MIN_CAPACITY")
+    [[ -n "$CAPACITY_PLOT_CAPACITIES" ]] && plot_cmd+=(--capacities "$CAPACITY_PLOT_CAPACITIES")
+    "${plot_cmd[@]}"
+  else
+    "${sim_cmd[@]}"
   fi
-  "${plot_cmd[@]}"
 done
 
 echo "Done. Congestion CSV outputs are under: $OUT_DIR"
