@@ -8,7 +8,7 @@ Usage:
 
 Options:
   -d, --dataset NAME        Run one dataset name/pattern (example: a2a_pareto)
-  -p, --protocol NAME       Transport protocol: ndp, hpcc, or tcp (default: ndp)
+  -p, --protocol NAME       Transport protocol: ndp, hpcc, or tcp (default: all three)
   --flow-size-sweep      Enable mono flow-size sweep datasets
   --no-flow-size-sweep   Disable mono flow-size sweep datasets
   --flow-size-values L   Comma-separated packet counts for sweep datasets
@@ -92,7 +92,7 @@ DATASET="${DATASET:-}"
 TARGET_PATTERN="${TARGET_PATTERN:-}"
 DATASET_FAMILY_PREFIX=""
 DATASET_FAMILY_KIND=""
-PROTOCOL="${PROTOCOL:-ndp}"
+PROTOCOLS="${PROTOCOL:-ndp hpcc tcp}"
 SEED="${SEED:-}"
 GENERATE_FLOW_SIZE_SWEEP="${GENERATE_FLOW_SIZE_SWEEP:-}"
 FLOW_SIZE_SWEEP_VALUES="${FLOW_SIZE_SWEEP_VALUES:-1,2,4,8,16,32,64,128,256,512,1024,2048,4096}"
@@ -166,7 +166,7 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --protocol requires a value" >&2
         exit 1
       fi
-      PROTOCOL="$2"
+      PROTOCOLS="$2"
       shift 2
       ;;
     -s|--seed)
@@ -200,6 +200,7 @@ fi
 # Generate synthetic INT logs using HTSIM transport runs.
 # Dataset logs below are stderr-only (INT traces).
 # Stdout progress/debug output is written to fyp/dash_results/synthetic/<protocol>/raw_logs/*.raw.log.
+# Connection matrices are shared across protocols under fyp/dash_results/synthetic/shared/connection_matrices/.
 # Output files are written to:
 #   fyp/dash_dataset/synthetic/<protocol>/log_incast_mono.txt
 #   fyp/dash_dataset/synthetic/<protocol>/log_a2a_mono.txt
@@ -215,22 +216,15 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" && "$PROTOCOL" != "tcp" ]]; then
-  echo "ERROR: --protocol must be ndp, hpcc, or tcp" >&2
-  exit 1
-fi
+for proto in $PROTOCOLS; do
+  if [[ "$proto" != "ndp" && "$proto" != "hpcc" && "$proto" != "tcp" ]]; then
+    echo "ERROR: --protocol must be ndp, hpcc, or tcp (got: $proto)" >&2
+    exit 1
+  fi
+done
 
-SIM_BIN="./sim/datacenter/htsim_${PROTOCOL}"
-if [[ ! -x "$SIM_BIN" ]]; then
-  echo "ERROR: $SIM_BIN not found or not executable. Build first with: make -C sim/datacenter all"
-  exit 1
-fi
-
-OUT_DIR="fyp/dash_dataset/synthetic/${PROTOCOL}"
-CM_DIR="fyp/dash_results/synthetic/${PROTOCOL}/connection_matrices"
-RUN_DIR="fyp/dash_results/synthetic/${PROTOCOL}/raw_logs"
-
-mkdir -p "$OUT_DIR" "$CM_DIR" "$RUN_DIR"
+CM_DIR="${CM_DIR:-fyp/dash_results/synthetic/shared/connection_matrices}"
+mkdir -p "$CM_DIR"
 
 NODES="${NODES:-1024}"
 CONNS_INCAST="${CONNS_INCAST:-512}"
@@ -244,14 +238,7 @@ fi
 # Unified per-shape run durations. Keep incast longer, A2A shorter by default.
 END_US_INCAST="${END_US_INCAST:-1000000000}"
 END_US_A2A="${END_US_A2A:-1000}"
-if [[ -n "${ROUTE_STRAT:-}" ]]; then
-  ROUTE_STRAT="$ROUTE_STRAT"
-elif [[ "$PROTOCOL" == "hpcc" || "$PROTOCOL" == "tcp" ]]; then
-  # main_hpcc and main_tcp only support single-path or ECMP-FIB modes.
-  ROUTE_STRAT="ecmp_host"
-else
-  ROUTE_STRAT="perm"
-fi
+ROUTE_STRAT_OVERRIDE="${ROUTE_STRAT:-}"
 NDP_PATHS="${NDP_PATHS:-8}"
 NDP_PATH_BURST="${NDP_PATH_BURST:-64}"
 ROUTE_PATHS="${ROUTE_PATHS:-$NDP_PATHS}"
@@ -518,29 +505,6 @@ if ! [[ "$BURST_HEAVYTAIL_SIGMA" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   exit 1
 fi
 
-if [[ "$PROTOCOL" == "hpcc" ]]; then
-  case "$ROUTE_STRAT" in
-    single|ecmp_host|ecmp_ar|ecmp_host_ar|ecmp_rr)
-      ;;
-    *)
-      echo "ERROR: ROUTE_STRAT=$ROUTE_STRAT is unsupported for hpcc." >&2
-      echo "Use one of: single, ecmp_host, ecmp_ar, ecmp_host_ar, ecmp_rr" >&2
-      exit 1
-      ;;
-  esac
-fi
-
-if [[ "$PROTOCOL" == "tcp" ]]; then
-  case "$ROUTE_STRAT" in
-    single|ecmp_host)
-      ;;
-    *)
-      echo "ERROR: ROUTE_STRAT=$ROUTE_STRAT is unsupported for tcp." >&2
-      echo "Use one of: single, ecmp_host" >&2
-      exit 1
-      ;;
-  esac
-fi
 
 normalize_dataset_alias() {
   local name="$1"
@@ -686,8 +650,8 @@ HEAVYTAIL_SPEC="${HEAVYTAIL_SPEC:-heavytail:2.0:${HEAVYTAIL_MIN_SIZE}:${HEAVYTAI
 echo "== Synthetic config =="
 echo "NODES=$NODES CONNS_INCAST=$CONNS_INCAST FLOWSIZE_INCAST=$FLOWSIZE_INCAST EXTRA_START_US=$EXTRA_START_US"
 echo "A2A_CONNS=$A2A_CONNS A2A_GROUPSIZE=$A2A_GROUPSIZE A2A_PARALLEL=$A2A_PARALLEL FLOWSIZE_A2A=$FLOWSIZE_A2A EXTRA_START_US_A2A=$EXTRA_START_US_A2A"
-echo "ROUTE_STRAT=$ROUTE_STRAT ROUTE_PATHS=$ROUTE_PATHS ROUTE_PATH_BURST=$ROUTE_PATH_BURST END_US_INCAST=$END_US_INCAST END_US_A2A=$END_US_A2A SEED=$SEED"
-echo "PROTOCOL=$PROTOCOL SIM_BIN=$SIM_BIN"
+echo "ROUTE_STRAT_OVERRIDE=${ROUTE_STRAT_OVERRIDE:-<auto per protocol>} ROUTE_PATHS=$ROUTE_PATHS ROUTE_PATH_BURST=$ROUTE_PATH_BURST END_US_INCAST=$END_US_INCAST END_US_A2A=$END_US_A2A SEED=$SEED"
+echo "PROTOCOLS=$PROTOCOLS"
 echo "DATASET=${DATASET:-<all>}"
 echo "GENERATE_FLOW_SIZE_SWEEP=$GENERATE_FLOW_SIZE_SWEEP FLOW_SIZE_SWEEP_VALUES=${FLOW_SIZE_SWEEP_LIST[*]:-<none>}"
 echo "GENERATE_BURST_SWEEP=$GENERATE_BURST_SWEEP BURST_SWEEP_VALUES=${BURST_SWEEP_LIST[*]:-<none>}"
@@ -962,6 +926,74 @@ if [[ "$GENERATE_FLOW_SIZE_SWEEP" == "1" ]]; then
   done
 fi
 
+if [[ "$GENERATE_HEAVYTAIL_SIGMA_SWEEP" == "1" ]]; then
+  echo
+  echo "== Generating heavytail sigma sweep matrices =="
+  for sigma in "${HEAVYTAIL_SIGMA_SWEEP_LIST[@]:-}"; do
+    [[ -n "$sigma" ]] || continue
+    sigma_tok="${sigma//./p}"
+    spec="heavytail:${sigma}:${HEAVYTAIL_MIN_SIZE}:${HEAVYTAIL_MAX_SIZE}"
+    inc_cm="$CM_DIR/incast_heavytail_sigma_${sigma_tok}.cm"
+    a2a_cm="$CM_DIR/a2a_heavytail_sigma_${sigma_tok}.cm"
+
+    if should_process "incast_heavytail_sigma_${sigma_tok}"; then
+      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$FLOWSIZE_INCAST" "$EXTRA_START_US" "$SEED" "$spec"
+    fi
+    if should_process "a2a_heavytail_sigma_${sigma_tok}"; then
+      if (( A2A_PARALLEL == 1 )); then
+        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$FLOWSIZE_A2A" "$EXTRA_START_US_A2A" "$SEED" "$spec"
+      else
+        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$FLOWSIZE_A2A" "$EXTRA_START_US_A2A" "$SEED" "$spec"
+      fi
+    fi
+  done
+fi
+
+if [[ "$GENERATE_BURST_SWEEP" == "1" ]]; then
+  echo
+  echo "== Generating heavytail burstiness sweep matrices =="
+  burst_flow_bytes=$((BURST_HEAVYTAIL_PACKETS * FLOW_SWEEP_PKT_BYTES))
+  burst_spec="heavytail:${BURST_HEAVYTAIL_SIGMA}:${burst_flow_bytes}:${HEAVYTAIL_MAX_SIZE}"
+  for bs in "${BURST_SWEEP_LIST[@]}"; do
+    inc_cm="$CM_DIR/incast_heavytail_burst_base.cm"
+    a2a_cm="$CM_DIR/a2a_heavytail_burst_base.cm"
+    if should_process "incast_heavytail_burst_${bs}"; then
+      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$burst_flow_bytes" "$EXTRA_START_US" "$SEED" "$burst_spec"
+    fi
+    if should_process "a2a_heavytail_burst_${bs}"; then
+      if (( A2A_PARALLEL == 1 )); then
+        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED" "$burst_spec"
+      else
+        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED" "$burst_spec"
+      fi
+    fi
+  done
+fi
+
+if [[ "$GENERATE_TEMPORAL_SWEEP" == "1" ]]; then
+  echo
+  echo "== Generating temporal-locality sweep matrices (heavytail_temp) =="
+  for tv in "${TEMPORAL_SWEEP_LIST[@]}"; do
+    inc_cm="$CM_DIR/incast_heavytail_temp_${tv}.cm"
+    a2a_cm="$CM_DIR/a2a_heavytail_temp_${tv}.cm"
+    inc_extra=$((TEMPORAL_BASE_EXTRA_START_US * tv))
+    a2a_extra=$((TEMPORAL_BASE_EXTRA_START_US_A2A * tv))
+    temp_min_size=$((HEAVYTAIL_TEMP_MIN_SIZE * tv))
+    temp_spec="heavytail:${HEAVYTAIL_TEMP_SIGMA}:${temp_min_size}:${HEAVYTAIL_TEMP_MAX_SIZE}"
+
+    if should_process "incast_heavytail_temp_${tv}"; then
+      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$FLOWSIZE_INCAST" "$inc_extra" "$SEED" "$temp_spec"
+    fi
+    if should_process "a2a_heavytail_temp_${tv}"; then
+      if (( A2A_PARALLEL == 1 )); then
+        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$FLOWSIZE_A2A" "$a2a_extra" "$SEED" "$temp_spec"
+      else
+        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$FLOWSIZE_A2A" "$a2a_extra" "$SEED" "$temp_spec"
+      fi
+    fi
+  done
+fi
+
 run_htsim() {
   local name="$1"
   local cm_file="$2"
@@ -1020,148 +1052,143 @@ run_htsim() {
   echo "Wrote (${line_count} lines)"
 }
 
-run_htsim "incast_mono" "$INC_CM" "$CONNS_INCAST"
-run_htsim "a2a_mono" "$A2A_CM" "$A2A_CONNS" "$END_US_A2A"
-run_htsim "incast_bimodal" "$INCAST_BIMODAL_CM" "$CONNS_INCAST"
-run_htsim "a2a_bimodal" "$A2A_BIMODAL_CM" "$A2A_CONNS" "$END_US_A2A"
-run_htsim "incast_pareto" "$INCAST_PARETO_CM" "$CONNS_INCAST"
-run_htsim "a2a_pareto" "$A2A_PARETO_CM" "$A2A_CONNS" "$END_US_A2A"
-run_htsim "incast_heavytail" "$INCAST_HEAVYTAIL_CM" "$CONNS_INCAST"
-run_htsim "a2a_heavytail" "$A2A_HEAVYTAIL_CM" "$A2A_CONNS" "$END_US_A2A"
-run_htsim "incast_exponential_skewed" "$INCAST_EXPONENTIAL_SKEWED_CM" "$CONNS_INCAST"
-run_htsim "a2a_exponential_skewed" "$A2A_EXPONENTIAL_SKEWED_CM" "$A2A_CONNS" "$END_US_A2A"
-
-if [[ "$GENERATE_PARETO_SKEW_SWEEP" == "1" ]]; then
+for PROTOCOL in $PROTOCOLS; do
   echo
-  echo "== Running HTSIM for Pareto skew sweep datasets =="
-  for alpha in "${PARETO_ALPHA_SWEEP_LIST[@]:-}"; do
-    [[ -n "$alpha" ]] || continue
-    alpha_tok="${alpha//./p}"
-    run_htsim "incast_pareto_alpha_${alpha_tok}" "$CM_DIR/incast_pareto_alpha_${alpha_tok}.cm" "$CONNS_INCAST"
-    run_htsim "a2a_pareto_alpha_${alpha_tok}" "$CM_DIR/a2a_pareto_alpha_${alpha_tok}.cm" "$A2A_CONNS" "$END_US_A2A"
-  done
-fi
+  echo "=== Protocol: $PROTOCOL ==="
 
-if [[ "$GENERATE_HEAVYTAIL_SIGMA_SWEEP" == "1" ]]; then
-  echo
-  echo "== Generating heavytail sigma sweep matrices =="
-  for sigma in "${HEAVYTAIL_SIGMA_SWEEP_LIST[@]:-}"; do
-    [[ -n "$sigma" ]] || continue
-    sigma_tok="${sigma//./p}"
-    spec="heavytail:${sigma}:${HEAVYTAIL_MIN_SIZE}:${HEAVYTAIL_MAX_SIZE}"
-    inc_cm="$CM_DIR/incast_heavytail_sigma_${sigma_tok}.cm"
-    a2a_cm="$CM_DIR/a2a_heavytail_sigma_${sigma_tok}.cm"
+  SIM_BIN="./sim/datacenter/htsim_${PROTOCOL}"
+  if [[ ! -x "$SIM_BIN" ]]; then
+    echo "ERROR: $SIM_BIN not found or not executable. Build first with: make -C sim/datacenter all" >&2
+    exit 1
+  fi
 
-    if should_process "incast_heavytail_sigma_${sigma_tok}"; then
-      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$FLOWSIZE_INCAST" "$EXTRA_START_US" "$SEED" "$spec"
-    fi
-    if should_process "a2a_heavytail_sigma_${sigma_tok}"; then
-      if (( A2A_PARALLEL == 1 )); then
-        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$FLOWSIZE_A2A" "$EXTRA_START_US_A2A" "$SEED" "$spec"
+  OUT_DIR="${OUT_DIR:-fyp/dash_dataset/synthetic/${PROTOCOL}}"
+  RUN_DIR="fyp/dash_results/synthetic/${PROTOCOL}/raw_logs"
+  mkdir -p "$OUT_DIR" "$RUN_DIR"
+
+  if [[ -n "$ROUTE_STRAT_OVERRIDE" ]]; then
+    ROUTE_STRAT="$ROUTE_STRAT_OVERRIDE"
+  elif [[ "$PROTOCOL" == "hpcc" ]]; then
+    ROUTE_STRAT="ecmp_host"
+  elif [[ "$PROTOCOL" == "tcp" ]]; then
+    ROUTE_STRAT="scatter"
+  else
+    ROUTE_STRAT="perm"
+  fi
+
+  if [[ "$PROTOCOL" == "hpcc" ]]; then
+    case "$ROUTE_STRAT" in
+      single|ecmp_host|ecmp_ar|ecmp_host_ar|ecmp_rr) ;;
+      *)
+        echo "ERROR: ROUTE_STRAT=$ROUTE_STRAT is unsupported for hpcc." >&2
+        echo "Use one of: single, ecmp_host, ecmp_ar, ecmp_host_ar, ecmp_rr" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  if [[ "$PROTOCOL" == "tcp" ]]; then
+    case "$ROUTE_STRAT" in
+      single|ecmp_host|scatter) ;;
+      *)
+        echo "ERROR: ROUTE_STRAT=$ROUTE_STRAT is unsupported for tcp." >&2
+        echo "Use one of: single, ecmp_host, scatter" >&2
+        exit 1
+        ;;
+    esac
+  fi
+
+  echo "PROTOCOL=$PROTOCOL SIM_BIN=$SIM_BIN ROUTE_STRAT=$ROUTE_STRAT"
+
+  run_htsim "incast_mono" "$INC_CM" "$CONNS_INCAST"
+  run_htsim "a2a_mono" "$A2A_CM" "$A2A_CONNS" "$END_US_A2A"
+  run_htsim "incast_bimodal" "$INCAST_BIMODAL_CM" "$CONNS_INCAST"
+  run_htsim "a2a_bimodal" "$A2A_BIMODAL_CM" "$A2A_CONNS" "$END_US_A2A"
+  run_htsim "incast_pareto" "$INCAST_PARETO_CM" "$CONNS_INCAST"
+  run_htsim "a2a_pareto" "$A2A_PARETO_CM" "$A2A_CONNS" "$END_US_A2A"
+  run_htsim "incast_heavytail" "$INCAST_HEAVYTAIL_CM" "$CONNS_INCAST"
+  run_htsim "a2a_heavytail" "$A2A_HEAVYTAIL_CM" "$A2A_CONNS" "$END_US_A2A"
+  run_htsim "incast_exponential_skewed" "$INCAST_EXPONENTIAL_SKEWED_CM" "$CONNS_INCAST"
+  run_htsim "a2a_exponential_skewed" "$A2A_EXPONENTIAL_SKEWED_CM" "$A2A_CONNS" "$END_US_A2A"
+
+  if [[ "$GENERATE_PARETO_SKEW_SWEEP" == "1" ]]; then
+    echo
+    echo "== Running HTSIM for Pareto skew sweep datasets =="
+    for alpha in "${PARETO_ALPHA_SWEEP_LIST[@]:-}"; do
+      [[ -n "$alpha" ]] || continue
+      alpha_tok="${alpha//./p}"
+      run_htsim "incast_pareto_alpha_${alpha_tok}" "$CM_DIR/incast_pareto_alpha_${alpha_tok}.cm" "$CONNS_INCAST"
+      run_htsim "a2a_pareto_alpha_${alpha_tok}" "$CM_DIR/a2a_pareto_alpha_${alpha_tok}.cm" "$A2A_CONNS" "$END_US_A2A"
+    done
+  fi
+
+  if [[ "$GENERATE_HEAVYTAIL_SIGMA_SWEEP" == "1" ]]; then
+    echo
+    echo "== Running HTSIM for heavytail sigma sweep datasets =="
+    for sigma in "${HEAVYTAIL_SIGMA_SWEEP_LIST[@]:-}"; do
+      [[ -n "$sigma" ]] || continue
+      sigma_tok="${sigma//./p}"
+      run_htsim "incast_heavytail_sigma_${sigma_tok}" "$CM_DIR/incast_heavytail_sigma_${sigma_tok}.cm" "$CONNS_INCAST"
+      run_htsim "a2a_heavytail_sigma_${sigma_tok}" "$CM_DIR/a2a_heavytail_sigma_${sigma_tok}.cm" "$A2A_CONNS" "$END_US_A2A"
+    done
+  fi
+
+  if [[ "$GENERATE_FLOW_SIZE_SWEEP" == "1" ]]; then
+    echo
+    echo "== Running HTSIM for mono flow-size sweep datasets =="
+    for fs in "${FLOW_SIZE_SWEEP_LIST[@]}"; do
+      if [[ "$FLOW_SWEEP_NORMALIZE_PKTS" == "1" ]]; then
+        sweep_end_us_incast="${FLOW_SWEEP_END_US_INCAST:-$((FLOW_SWEEP_END_US_INCAST_BASE * FLOW_SWEEP_BASE_PKTS))}"
+        sweep_end_us_a2a="${FLOW_SWEEP_END_US_A2A:-$((FLOW_SWEEP_END_US_A2A_BASE * FLOW_SWEEP_BASE_PKTS))}"
+        _norm_conns_incast=$(( FLOW_SWEEP_CONNS_INCAST * FLOW_SWEEP_BASE_PKTS / fs ))
+        if (( _norm_conns_incast > NODES - 1 )); then _norm_conns_incast=$((NODES - 1)); fi
+        if (( _norm_conns_incast < FLOW_SWEEP_MIN_CONNS_INCAST )); then _norm_conns_incast="$FLOW_SWEEP_MIN_CONNS_INCAST"; fi
+        _base_groups=$(( FLOW_SWEEP_A2A_CONNS / FLOW_SWEEP_A2A_GROUPSIZE ))
+        _norm_groups=$(( _base_groups * FLOW_SWEEP_BASE_PKTS / fs ))
+        if (( _norm_groups < 1 )); then _norm_groups=1; fi
+        _max_a2a_groups=$(( NODES / FLOW_SWEEP_A2A_GROUPSIZE ))
+        if (( _norm_groups > _max_a2a_groups )); then _norm_groups=$_max_a2a_groups; fi
+        _norm_conns_a2a=$(( _norm_groups * FLOW_SWEEP_A2A_GROUPSIZE ))
       else
-        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$FLOWSIZE_A2A" "$EXTRA_START_US_A2A" "$SEED" "$spec"
+        sweep_end_us_incast="${FLOW_SWEEP_END_US_INCAST:-$((FLOW_SWEEP_END_US_INCAST_BASE * fs))}"
+        sweep_end_us_a2a="${FLOW_SWEEP_END_US_A2A:-$((FLOW_SWEEP_END_US_A2A_BASE * fs))}"
+        _norm_conns_incast="$FLOW_SWEEP_CONNS_INCAST"
+        _norm_conns_a2a="$FLOW_SWEEP_A2A_CONNS"
       fi
-    fi
-  done
+      run_htsim "incast_mono_${fs}" "$CM_DIR/incast_mono_${fs}.cm" "$_norm_conns_incast" "$sweep_end_us_incast"
+      run_htsim "a2a_mono_${fs}" "$CM_DIR/a2a_mono_${fs}.cm" "$_norm_conns_a2a" "$sweep_end_us_a2a"
+    done
+  fi
 
-  echo
-  echo "== Running HTSIM for heavytail sigma sweep datasets =="
-  for sigma in "${HEAVYTAIL_SIGMA_SWEEP_LIST[@]:-}"; do
-    [[ -n "$sigma" ]] || continue
-    sigma_tok="${sigma//./p}"
-    run_htsim "incast_heavytail_sigma_${sigma_tok}" "$CM_DIR/incast_heavytail_sigma_${sigma_tok}.cm" "$CONNS_INCAST"
-    run_htsim "a2a_heavytail_sigma_${sigma_tok}" "$CM_DIR/a2a_heavytail_sigma_${sigma_tok}.cm" "$A2A_CONNS" "$END_US_A2A"
-  done
-fi
+  if [[ "$GENERATE_BURST_SWEEP" == "1" && "$PROTOCOL" != "ndp" ]]; then
+    echo "NOTE: burst sweep skipped for ${PROTOCOL} (path_burst is NDP-specific)"
+  elif [[ "$GENERATE_BURST_SWEEP" == "1" ]]; then
+    echo
+    echo "== Running HTSIM for heavytail burstiness sweep datasets (NDP only, sigma=${BURST_HEAVYTAIL_SIGMA}, fixed packets=${BURST_HEAVYTAIL_PACKETS}) =="
+    burst_flow_bytes=$((BURST_HEAVYTAIL_PACKETS * FLOW_SWEEP_PKT_BYTES))
+    inc_cm="$CM_DIR/incast_heavytail_burst_base.cm"
+    a2a_cm="$CM_DIR/a2a_heavytail_burst_base.cm"
+    for bs in "${BURST_SWEEP_LIST[@]}"; do
+      run_htsim "incast_heavytail_burst_${bs}" "$inc_cm" "$CONNS_INCAST" "$END_US_INCAST" "$bs"
+      run_htsim "a2a_heavytail_burst_${bs}" "$a2a_cm" "$A2A_CONNS" "$END_US_A2A" "$bs"
+    done
+  fi
 
-if [[ "$GENERATE_FLOW_SIZE_SWEEP" == "1" ]]; then
-  echo
-  echo "== Running HTSIM for mono flow-size sweep datasets =="
-  for fs in "${FLOW_SIZE_SWEEP_LIST[@]}"; do
-    if [[ "$FLOW_SWEEP_NORMALIZE_PKTS" == "1" ]]; then
-      # Constant end time across all N: total bytes is constant so throughput duration is similar
-      sweep_end_us_incast="${FLOW_SWEEP_END_US_INCAST:-$((FLOW_SWEEP_END_US_INCAST_BASE * FLOW_SWEEP_BASE_PKTS))}"
-      sweep_end_us_a2a="${FLOW_SWEEP_END_US_A2A:-$((FLOW_SWEEP_END_US_A2A_BASE * FLOW_SWEEP_BASE_PKTS))}"
-      _norm_conns_incast=$(( FLOW_SWEEP_CONNS_INCAST * FLOW_SWEEP_BASE_PKTS / fs ))
-      if (( _norm_conns_incast > NODES - 1 )); then _norm_conns_incast=$((NODES - 1)); fi
-      if (( _norm_conns_incast < FLOW_SWEEP_MIN_CONNS_INCAST )); then _norm_conns_incast="$FLOW_SWEEP_MIN_CONNS_INCAST"; fi
-      _base_groups=$(( FLOW_SWEEP_A2A_CONNS / FLOW_SWEEP_A2A_GROUPSIZE ))
-      _norm_groups=$(( _base_groups * FLOW_SWEEP_BASE_PKTS / fs ))
-      if (( _norm_groups < 1 )); then _norm_groups=1; fi
-      _max_a2a_groups=$(( NODES / FLOW_SWEEP_A2A_GROUPSIZE ))
-      if (( _norm_groups > _max_a2a_groups )); then _norm_groups=$_max_a2a_groups; fi
-      _norm_conns_a2a=$(( _norm_groups * FLOW_SWEEP_A2A_GROUPSIZE ))
-    else
-      sweep_end_us_incast="${FLOW_SWEEP_END_US_INCAST:-$((FLOW_SWEEP_END_US_INCAST_BASE * fs))}"
-      sweep_end_us_a2a="${FLOW_SWEEP_END_US_A2A:-$((FLOW_SWEEP_END_US_A2A_BASE * fs))}"
-      _norm_conns_incast="$FLOW_SWEEP_CONNS_INCAST"
-      _norm_conns_a2a="$FLOW_SWEEP_A2A_CONNS"
-    fi
-    run_htsim "incast_mono_${fs}" "$CM_DIR/incast_mono_${fs}.cm" "$_norm_conns_incast" "$sweep_end_us_incast"
-    run_htsim "a2a_mono_${fs}" "$CM_DIR/a2a_mono_${fs}.cm" "$_norm_conns_a2a" "$sweep_end_us_a2a"
-  done
-fi
+  if [[ "$GENERATE_TEMPORAL_SWEEP" == "1" ]]; then
+    echo
+    echo "== Running HTSIM for temporal-locality sweep datasets (heavytail_temp) =="
+    for tv in "${TEMPORAL_SWEEP_LIST[@]}"; do
+      inc_cm="$CM_DIR/incast_heavytail_temp_${tv}.cm"
+      a2a_cm="$CM_DIR/a2a_heavytail_temp_${tv}.cm"
+      inc_extra=$((TEMPORAL_BASE_EXTRA_START_US * tv))
+      a2a_extra=$((TEMPORAL_BASE_EXTRA_START_US_A2A * tv))
+      temporal_end_us_a2a=$((END_US_A2A + a2a_extra + TEMPORAL_END_MARGIN_US))
+      run_htsim "incast_heavytail_temp_${tv}" "$inc_cm" "$CONNS_INCAST"
+      run_htsim "a2a_heavytail_temp_${tv}" "$a2a_cm" "$A2A_CONNS" "$temporal_end_us_a2a"
+    done
+  fi
 
-if [[ "$GENERATE_BURST_SWEEP" == "1" && "$PROTOCOL" != "ndp" ]]; then
-  echo "NOTE: burst sweep skipped for ${PROTOCOL} (path_burst is NDP-specific)"
-  GENERATE_BURST_SWEEP=0
-fi
-
-if [[ "$GENERATE_BURST_SWEEP" == "1" ]]; then
-  echo
-  echo "== Running HTSIM for heavytail burstiness sweep datasets (NDP only, sigma=${BURST_HEAVYTAIL_SIGMA}, fixed packets=${BURST_HEAVYTAIL_PACKETS}) =="
-  burst_flow_bytes=$((BURST_HEAVYTAIL_PACKETS * FLOW_SWEEP_PKT_BYTES))
-  burst_spec="heavytail:${BURST_HEAVYTAIL_SIGMA}:${burst_flow_bytes}:${HEAVYTAIL_MAX_SIZE}"
-  inc_cm="$CM_DIR/incast_heavytail_burst_base.cm"
-  a2a_cm="$CM_DIR/a2a_heavytail_burst_base.cm"
-  for bs in "${BURST_SWEEP_LIST[@]}"; do
-    if should_process "incast_heavytail_burst_${bs}"; then
-      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$burst_flow_bytes" "$EXTRA_START_US" "$SEED" "$burst_spec"
-    fi
-    if should_process "a2a_heavytail_burst_${bs}"; then
-      if (( A2A_PARALLEL == 1 )); then
-        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED" "$burst_spec"
-      else
-        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$burst_flow_bytes" "$EXTRA_START_US_A2A" "$SEED" "$burst_spec"
-      fi
-    fi
-
-    run_htsim "incast_heavytail_burst_${bs}" "$inc_cm" "$CONNS_INCAST" "$END_US_INCAST" "$bs"
-    run_htsim "a2a_heavytail_burst_${bs}" "$a2a_cm" "$A2A_CONNS" "$END_US_A2A" "$bs"
-  done
-fi
-
-if [[ "$GENERATE_TEMPORAL_SWEEP" == "1" ]]; then
-  echo
-  echo "== Generating temporal-locality sweep datasets (heavytail_temp) =="
-  # Temporal locality is controlled by flow size: multiplier tv scales the heavytail median
-  # (min_size) so larger tv -> longer flows -> more consecutive same-path packets -> better
-  # cache suppression. Start spread also scales with tv so concurrency stays roughly constant.
-  for tv in "${TEMPORAL_SWEEP_LIST[@]}"; do
-    inc_cm="$CM_DIR/incast_heavytail_temp_${tv}.cm"
-    a2a_cm="$CM_DIR/a2a_heavytail_temp_${tv}.cm"
-    inc_extra=$((TEMPORAL_BASE_EXTRA_START_US * tv))
-    a2a_extra=$((TEMPORAL_BASE_EXTRA_START_US_A2A * tv))
-    temporal_end_us_a2a=$((END_US_A2A + a2a_extra + TEMPORAL_END_MARGIN_US))
-    # Scale median by tv; heavy tail max stays fixed so very large flows are always possible
-    temp_min_size=$((HEAVYTAIL_TEMP_MIN_SIZE * tv))
-    temp_spec="heavytail:${HEAVYTAIL_TEMP_SIGMA}:${temp_min_size}:${HEAVYTAIL_TEMP_MAX_SIZE}"
-
-    if should_process "incast_heavytail_temp_${tv}"; then
-      run_gen python3 sim/datacenter/connection_matrices/gen_incast.py "$inc_cm" "$NODES" "$CONNS_INCAST" "$FLOWSIZE_INCAST" "$inc_extra" "$SEED" "$temp_spec"
-    fi
-    if should_process "a2a_heavytail_temp_${tv}"; then
-      if (( A2A_PARALLEL == 1 )); then
-        run_gen python3 sim/datacenter/connection_matrices/gen_serial_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$FLOWSIZE_A2A" "$a2a_extra" "$SEED" "$temp_spec"
-      else
-        run_gen python3 sim/datacenter/connection_matrices/gen_serialn_alltoall.py "$a2a_cm" "$NODES" "$A2A_CONNS" "$A2A_GROUPSIZE" "$A2A_PARALLEL" "$FLOWSIZE_A2A" "$a2a_extra" "$SEED" "$temp_spec"
-      fi
-    fi
-
-    run_htsim "incast_heavytail_temp_${tv}" "$inc_cm" "$CONNS_INCAST"
-    run_htsim "a2a_heavytail_temp_${tv}" "$a2a_cm" "$A2A_CONNS" "$temporal_end_us_a2a"
-  done
-fi
+  echo "Done [$PROTOCOL]. total_written_lines=$TOTAL_WRITTEN_LINES"
+done
 
 echo
 echo "Done. total_written_lines=$TOTAL_WRITTEN_LINES"

@@ -1575,8 +1575,8 @@ void NdpSink::receivePacket(Packet& pkt) {
     // Print INT trace to stderr so it can be inspected separately from stdout logs
     // fprintf(stderr, "dst=%u\n", p->dst());
     // if (int_hop_buf > 0) {                                                     // all flows (permutation TM)
-    if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID < 16) {  // 16 ToRs, ~128 concurrent
-    // if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID == 0) { // single ToR, ~8 concurrent
+    // if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID < 16) {  // all 16 ToRs = all flows
+    if (int_hop_buf > 0 && int_info_buf[int_hop_buf - 1]._switchID == 0) { // single ToR (ToR 0), ~8 concurrent
     // if (int_hop_buf > 0 && p->dst() == 0) {                                      // single sink incast TM
     // if (int_hop_buf > 0) {
         // Make stderr fully buffered on first INT record to avoid per-write syscalls

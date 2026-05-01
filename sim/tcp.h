@@ -17,7 +17,7 @@
 
 #define timeInf 0
 
-//#define PACKET_SCATTER 1
+#define PACKET_SCATTER 1
 //#define RANDOM_PATH 1
 
 //#define MAX_SENT 10000

@@ -38,7 +38,7 @@ EventList eventlist;
 void exit_error(char* progr) {
     cout << "Usage " << progr
          << " [-nodes N]\n\t[-conns C]\n\t[-cwnd cwnd_size]\n\t[-q queue_size]"
-            "\n\t[-tm traffic_matrix_file]\n\t[-strat route_strategy (single,ecmp_host)]"
+            "\n\t[-tm traffic_matrix_file]\n\t[-strat route_strategy (single,ecmp_host,scatter)]"
             "\n\t[-seed random_seed]\n\t[-end end_time_in_usec]"
             "\n\t[-mtu MTU]\n\t[-hop_latency x]\n\t[-switch_latency x]" << endl;
     exit(1);
@@ -177,9 +177,11 @@ int main(int argc, char **argv) {
             } else if (!strcmp(argv[i+1], "ecmp_host")) {
                 route_strategy = ECMP_FIB;
                 FatTreeSwitch::set_strategy(FatTreeSwitch::ECMP);
+            } else if (!strcmp(argv[i+1], "scatter")) {
+                route_strategy = SCATTER_PERMUTE;
             } else {
                 cout << "Unknown strategy " << argv[i+1]
-                     << " for TCP. Valid values: single, ecmp_host" << endl;
+                     << " for TCP. Valid values: single, ecmp_host, scatter" << endl;
                 exit_error(argv[0]);
             }
             i++;
@@ -308,7 +310,7 @@ int main(int argc, char **argv) {
         path_refcounts[src][dest]++;
         path_refcounts[dest][src]++;
 
-        if (route_strategy == SINGLE_PATH) {
+        if (route_strategy == SINGLE_PATH || route_strategy == SCATTER_PERMUTE) {
             if (!net_paths[src][dest])
                 net_paths[src][dest] = top->get_paths(src, dest);
             if (!net_paths[dest][src])
@@ -370,6 +372,20 @@ int main(int argc, char **argv) {
                 routein->push_back(tcpSrc);
 
                 tcpSrc->connect(*routeout, *routein, *tcpSnk, crt->start);
+                break;
+            }
+        case SCATTER_PERMUTE:
+            {
+                // Full pre-computed paths: connect using first path for _route init,
+                // then set_paths provides all paths for per-packet cycling.
+                // No addHostPort: switch does not need to route; the full path is explicit.
+                Route* routeout_sp = new Route(*(net_paths[src][dest]->at(0)));
+                routeout_sp->push_back(tcpSnk);
+                Route* routein_sp = new Route();
+                routein_sp->push_back(tcpSrc);
+
+                tcpSrc->connect(*routeout_sp, *routein_sp, *tcpSnk, crt->start);
+                tcpSrc->set_paths(net_paths[src][dest]);
                 break;
             }
         default:

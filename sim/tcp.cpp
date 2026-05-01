@@ -650,7 +650,7 @@ TcpSink::receivePacket(Packet& pkt) {
     int size = p->size(); // TODO: the following code assumes all packets are the same size
     pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_RCVDESTROY);
 
-    if (p->_int_hop > 0) {
+    if (p->_int_hop > 0 && p->_int_info[p->_int_hop - 1]._switchID == 0) { // single ToR (ToR 0), ~8 concurrent
         static bool s_stderr_buffered = false;
         if (!s_stderr_buffered) {
             static char s_int_buf[1 << 22];

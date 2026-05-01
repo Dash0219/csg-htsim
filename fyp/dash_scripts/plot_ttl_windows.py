@@ -16,6 +16,8 @@ def synthetic_dataset_names(include_low_temp=False):
         "a2a_bimodal",
         "incast_pareto",
         "a2a_pareto",
+        "incast_heavytail",
+        "a2a_heavytail",
         "incast_exponential_skewed",
         "a2a_exponential_skewed",
     ]

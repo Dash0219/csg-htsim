@@ -215,12 +215,6 @@ def parse_args() -> argparse.Namespace:
         help="Maximum per-flow TTL in milliseconds for FlowLifetimeAdaptiveTTL",
     )
     parser.add_argument(
-        "--life-base-ttl-ms",
-        type=float,
-        default=0.5,
-        help="Bootstrap TTL in milliseconds before flow lifetime is learned",
-    )
-    parser.add_argument(
         "--life-ema-alpha",
         type=float,
         default=0.2,
@@ -618,7 +612,6 @@ def main() -> None:  # pragma: no cover
     pit_download_ps = int(args.pit_download_us * 1_000_000)
     life_min_ttl_ps = int(args.life_min_ttl_ms * 1_000_000_000)
     life_max_ttl_ps = int(args.life_max_ttl_ms * 1_000_000_000)
-    life_base_ttl_ps = int(args.life_base_ttl_ms * 1_000_000_000)
     cache_map = {
         "lru": lambda: LRULastPath(args.size),
         "lfu": lambda: LFULastPath(args.size),
@@ -643,7 +636,6 @@ def main() -> None:  # pragma: no cover
             args.size,
             min_ttl_ps=life_min_ttl_ps,
             max_ttl_ps=life_max_ttl_ps,
-            base_ttl_ps=life_base_ttl_ps,
             ema_alpha=args.life_ema_alpha,
             ttl_multiplier=args.life_ttl_multiplier,
         ),

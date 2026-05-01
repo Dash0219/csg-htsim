@@ -1096,13 +1096,12 @@ class FlowLifetimeAdaptiveTTL:
         capacity,
         min_ttl_ps=100_000_000,
         max_ttl_ps=20_000_000_000,
-        base_ttl_ps=500_000_000,
         ema_alpha=0.2,
         ttl_multiplier=4.0,
     ):
         if capacity <= 0:
             raise ValueError("capacity must be > 0")
-        if min_ttl_ps <= 0 or max_ttl_ps <= 0 or base_ttl_ps <= 0:
+        if min_ttl_ps <= 0 or max_ttl_ps <= 0:
             raise ValueError("TTL values must be > 0")
         if min_ttl_ps > max_ttl_ps:
             raise ValueError("min_ttl_ps must be <= max_ttl_ps")
@@ -1114,7 +1113,6 @@ class FlowLifetimeAdaptiveTTL:
         self.capacity = capacity
         self.min_ttl_ps = min_ttl_ps
         self.max_ttl_ps = max_ttl_ps
-        self.base_ttl_ps = base_ttl_ps
         self.ema_alpha = ema_alpha
         self.ttl_multiplier = ttl_multiplier
 
@@ -1123,7 +1121,9 @@ class FlowLifetimeAdaptiveTTL:
 
     def _effective_ttl(self, ema_gap_ps, samples):
         if samples <= 1:
-            return self.base_ttl_ps
+            # No gap observed yet — never expire on first return (pure LRU behaviour
+            # until we have data to learn from)
+            return float('inf')
         ttl = int(ema_gap_ps * self.ttl_multiplier)
         if ttl < self.min_ttl_ps:
             return self.min_ttl_ps
@@ -1157,7 +1157,7 @@ class FlowLifetimeAdaptiveTTL:
             self._store.popitem(last=False)
             evicted = True
 
-        self._store[flow] = (path, ts, self.base_ttl_ps, 1)
+        self._store[flow] = (path, ts, 0, 1)
         return False, evicted
 
 
@@ -1974,8 +1974,6 @@ if __name__ == '__main__':
                     help='Minimum per-flow TTL in milliseconds for FlowLifetimeAdaptiveTTL (default 0.1ms)')
     ap.add_argument('--life-max-ttl-ms', type=float, default=20.0,
                     help='Maximum per-flow TTL in milliseconds for FlowLifetimeAdaptiveTTL (default 20ms)')
-    ap.add_argument('--life-base-ttl-ms', type=float, default=0.5,
-                    help='Bootstrap TTL in milliseconds before flow lifetime is learned (default 0.5ms)')
     ap.add_argument('--life-ema-alpha', type=float, default=0.2,
                     help='EMA alpha for per-flow gap learning in FlowLifetimeAdaptiveTTL (default 0.2)')
     ap.add_argument('--life-ttl-multiplier', type=float, default=4.0,
@@ -1993,6 +1991,10 @@ if __name__ == '__main__':
     print(f"Parsing {args.logfile} ...", file=sys.stderr)
     records = list(parse(args.logfile))
     print(f"Loaded {len(records):,} INT records", file=sys.stderr)
+
+    if not records:
+        print("WARN: No INT records parsed from input log — skipping (empty dataset).", file=sys.stderr)
+        sys.exit(0)
 
     if args.sweep:
         capacity_curves = {} if args.capacity_csv else None
@@ -2015,7 +2017,6 @@ if __name__ == '__main__':
         pit_download_ps = int(args.pit_download_us * 1_000_000)
         life_min_ttl_ps = int(args.life_min_ttl_ms * 1_000_000_000)
         life_max_ttl_ps = int(args.life_max_ttl_ms * 1_000_000_000)
-        life_base_ttl_ps = int(args.life_base_ttl_ms * 1_000_000_000)
         cache_map = {
             'lru':          lambda: LRULastPath(args.size),
             'lfu':          lambda: LFULastPath(args.size),
@@ -2040,7 +2041,6 @@ if __name__ == '__main__':
                 args.size,
                 min_ttl_ps=life_min_ttl_ps,
                 max_ttl_ps=life_max_ttl_ps,
-                base_ttl_ps=life_base_ttl_ps,
                 ema_alpha=args.life_ema_alpha,
                 ttl_multiplier=args.life_ttl_multiplier,
             ),

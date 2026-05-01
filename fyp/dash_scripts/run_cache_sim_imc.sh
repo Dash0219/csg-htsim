@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 # Keep very large splits bounded; univ2_sink_244.157.0.0_16 can be an extreme outlier.
-# 6.5M keeps runtime close to the largest "normal" split (~6.3M) with some headroom.
+# 6.5M keeps runtime close to the largest "normal" split with some headroom.
 IMC_MAX_PACKETS_PER_SPLIT="${IMC_MAX_PACKETS_PER_SPLIT:-7000000}"
 CAPACITY_PLOT_CAPACITIES="${CAPACITY_PLOT_CAPACITIES:-}"
 CAPACITY_PLOT_MIN_CAPACITY="${CAPACITY_PLOT_MIN_CAPACITY:-512}"

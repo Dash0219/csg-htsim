@@ -749,15 +749,15 @@ def test_online_adaptive_dual_ttl_invalid_params() -> None:
 # ---------------------------------------------------------------------------
 
 def test_flow_lifetime_ttl_base_ttl_on_first() -> None:
-    c = FlowLifetimeAdaptiveTTL(4, base_ttl_ps=500, min_ttl_ps=100, max_ttl_ps=5000)
+    c = FlowLifetimeAdaptiveTTL(4, min_ttl_ps=100, max_ttl_ps=5000)
     c.lookup_and_update("f1", (1,), 0)
-    # Within base_ttl_ps → hit
+    # First entry has inf TTL (no gap observed yet) → always hits before eviction
     hit, _ = c.lookup_and_update("f1", (1,), 200)
     assert hit is True
 
 
 def test_flow_lifetime_ttl_adapts_with_ema() -> None:
-    c = FlowLifetimeAdaptiveTTL(4, base_ttl_ps=500, min_ttl_ps=1, max_ttl_ps=100000, ema_alpha=1.0, ttl_multiplier=2.0)
+    c = FlowLifetimeAdaptiveTTL(4, min_ttl_ps=1, max_ttl_ps=100000, ema_alpha=1.0, ttl_multiplier=2.0)
     c.lookup_and_update("f1", (1,), 0)
     c.lookup_and_update("f1", (1,), 1000)  # gap=1000, samples=2, ema=1000, ttl=2000
     # ts=1001 within learned TTL(2000): should hit
@@ -766,7 +766,7 @@ def test_flow_lifetime_ttl_adapts_with_ema() -> None:
 
 
 def test_flow_lifetime_ttl_min_clamp() -> None:
-    c = FlowLifetimeAdaptiveTTL(4, base_ttl_ps=500, min_ttl_ps=999, max_ttl_ps=10000, ema_alpha=1.0, ttl_multiplier=1.0)
+    c = FlowLifetimeAdaptiveTTL(4, min_ttl_ps=999, max_ttl_ps=10000, ema_alpha=1.0, ttl_multiplier=1.0)
     c.lookup_and_update("f1", (1,), 0)
     c.lookup_and_update("f1", (1,), 1)  # gap=1, ttl=1*1=1 < min_ttl_ps=999 → clamped to 999
     hit, _ = c.lookup_and_update("f1", (1,), 500)  # within clamped TTL
@@ -774,7 +774,7 @@ def test_flow_lifetime_ttl_min_clamp() -> None:
 
 
 def test_flow_lifetime_ttl_max_clamp() -> None:
-    c = FlowLifetimeAdaptiveTTL(4, base_ttl_ps=100, min_ttl_ps=1, max_ttl_ps=100, ema_alpha=1.0, ttl_multiplier=1000.0)
+    c = FlowLifetimeAdaptiveTTL(4, min_ttl_ps=1, max_ttl_ps=100, ema_alpha=1.0, ttl_multiplier=1000.0)
     c.lookup_and_update("f1", (1,), 0)
     c.lookup_and_update("f1", (1,), 500)  # gap=500, ttl=500000 > max_ttl_ps=100 → clamped to 100
     # Just verify no crash and TTL is clamped
@@ -783,7 +783,7 @@ def test_flow_lifetime_ttl_max_clamp() -> None:
 
 
 def test_flow_lifetime_ttl_eviction() -> None:
-    c = FlowLifetimeAdaptiveTTL(2, base_ttl_ps=500)
+    c = FlowLifetimeAdaptiveTTL(2)
     c.lookup_and_update(1, (1,), 0)
     c.lookup_and_update(2, (2,), 0)
     _, evicted = c.lookup_and_update(3, (3,), 0)
@@ -1554,7 +1554,7 @@ def test_pit_collapsed_lru_admit_eviction() -> None:
 
 def test_flow_lifetime_ttl_ema_first_sample() -> None:
     # _update_ema samples<=1 branch: call _update_ema directly with samples=1
-    c = FlowLifetimeAdaptiveTTL(4, base_ttl_ps=100, min_ttl_ps=1, max_ttl_ps=10000, ema_alpha=0.5)
+    c = FlowLifetimeAdaptiveTTL(4, min_ttl_ps=1, max_ttl_ps=10000, ema_alpha=0.5)
     result = c._update_ema(500, 300, 1)  # samples=1 → return gap_ps directly
     assert result == 300
     result2 = c._update_ema(500, 300, 2)  # samples=2 → ema formula
@@ -2000,15 +2000,20 @@ def test_cache_int_qs_invalid_params() -> None:
 # ---------------------------------------------------------------------------
 
 def test_flow_ttl_qs_base_ttl_on_first() -> None:
-    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0, base_ttl_ps=1000)
+    # First entry has inf TTL (no gap observed yet) → always hits before eviction
+    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0)
     c.process("k1", 100, ts=0)
     assert c.process("k1", 100, ts=500)[0] is True
 
 
 def test_flow_ttl_qs_expired_miss() -> None:
-    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0, base_ttl_ps=50)
+    # After two accesses a gap is learned; a third access beyond ttl should miss.
+    # ema_alpha=1.0, ttl_multiplier=1.0 → ttl = gap = 50ps; min=1, max=1_000_000_000
+    c = FlowLifetimeAdaptiveTTLQS(4, range_threshold=0, ema_alpha=1.0, ttl_multiplier=1.0,
+                                   min_ttl_ps=1, max_ttl_ps=1_000_000_000)
     c.process("k1", 100, ts=0)
-    assert c.process("k1", 100, ts=200)[0] is False
+    c.process("k1", 100, ts=50)   # gap=50 → ema=50 → ttl=50
+    assert c.process("k1", 100, ts=200)[0] is False  # 200-50=150 > ttl=50 → expired
 
 
 def test_flow_ttl_qs_eviction() -> None:

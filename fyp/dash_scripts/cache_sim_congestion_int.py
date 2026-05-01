@@ -437,15 +437,13 @@ class FlowLifetimeAdaptiveTTLQS:
 
     def __init__(self, capacity: int, range_threshold: int = 0,
                  min_ttl_ps: int = 100_000_000, max_ttl_ps: int = 20_000_000_000,
-                 base_ttl_ps: int = 500_000_000, ema_alpha: float = 0.2,
-                 ttl_multiplier: float = 4.0):
+                 ema_alpha: float = 0.2, ttl_multiplier: float = 4.0):
         if capacity <= 0:
             raise ValueError("capacity must be > 0")
         self.capacity = capacity
         self.range_threshold = range_threshold
         self.min_ttl_ps = min_ttl_ps
         self.max_ttl_ps = max_ttl_ps
-        self.base_ttl_ps = base_ttl_ps
         self.ema_alpha = ema_alpha
         self.ttl_multiplier = ttl_multiplier
         # key -> (qs, last_ts, ema_gap_ps, samples)
@@ -453,7 +451,7 @@ class FlowLifetimeAdaptiveTTLQS:
 
     def _effective_ttl(self, ema_gap_ps: int, samples: int) -> int:
         if samples <= 1:
-            return self.base_ttl_ps
+            return float('inf')
         ttl = int(ema_gap_ps * self.ttl_multiplier)
         return max(self.min_ttl_ps, min(self.max_ttl_ps, ttl))
 
@@ -478,7 +476,7 @@ class FlowLifetimeAdaptiveTTLQS:
         if len(self._store) >= self.capacity:
             self._store.popitem(last=False)
             evicted = True
-        self._store[key] = (new_qs, ts, self.base_ttl_ps, 1)
+        self._store[key] = (new_qs, ts, 0, 1)
         return False, evicted
 
 
@@ -1278,7 +1276,6 @@ def parse_args() -> argparse.Namespace:
                         help="PIT download delay in microseconds for PITCollapsedLRU (default 2us)")
     parser.add_argument("--life-min-ttl-ms", type=float, default=0.1)
     parser.add_argument("--life-max-ttl-ms", type=float, default=20.0)
-    parser.add_argument("--life-base-ttl-ms", type=float, default=0.5)
     parser.add_argument("--life-ema-alpha", type=float, default=0.2)
     parser.add_argument("--life-ttl-multiplier", type=float, default=4.0)
     parser.add_argument("--bloom-bits", type=int, default=1 << 18)
@@ -1328,13 +1325,16 @@ def main() -> None:  # pragma: no cover
         file=sys.stderr,
     )
 
+    if not all_records:
+        print("WARN: No INT records parsed from input log — skipping (empty dataset).", file=sys.stderr)
+        return
+
     ttl_ps = int(args.ttl_ms * 1_000_000_000)
     fresh_ttl_ps = int(args.fresh_ttl_ms * 1_000_000_000)
     dual_dyn_ttl_ps = int(args.dual_dyn_ttl_ms * 1_000_000_000)
     pit_download_ps = int(args.pit_download_us * 1_000_000)
     life_min_ttl_ps = int(args.life_min_ttl_ms * 1_000_000_000)
     life_max_ttl_ps = int(args.life_max_ttl_ms * 1_000_000_000)
-    life_base_ttl_ps = int(args.life_base_ttl_ms * 1_000_000_000)
     rt = args.range_threshold
 
     if args.sweep:
@@ -1356,7 +1356,7 @@ def main() -> None:  # pragma: no cover
         "f_inv":            lambda: FreshnessInvalidationQS(args.size, rt, fresh_ttl_ps),
         "cache_int":        lambda: CacheINTFreshnessQS(args.size, rt, dual_dyn_ttl_ps, args.dual_stable_hits),
         "life_ttl":         lambda: FlowLifetimeAdaptiveTTLQS(
-            args.size, rt, life_min_ttl_ps, life_max_ttl_ps, life_base_ttl_ps,
+            args.size, rt, life_min_ttl_ps, life_max_ttl_ps,
             args.life_ema_alpha, args.life_ttl_multiplier,
         ),
         "admission":        lambda: AdmissionFilterQS(

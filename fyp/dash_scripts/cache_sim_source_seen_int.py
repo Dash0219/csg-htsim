@@ -330,7 +330,8 @@ def main() -> None:
         print(f"Loaded {len(records):,} source records", file=sys.stderr)
 
     if not splitwise and not records:
-        raise SystemExit("No INT packets parsed from input log")
+        print("WARN: No INT records parsed from input log — skipping (empty dataset).", file=sys.stderr)
+        return
 
     if args.sweep:
         split_outputs: List[Tuple[Path, List[CacheResult]]] = []

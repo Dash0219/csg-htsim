@@ -31,6 +31,10 @@ def is_supported_dataset_name(name):
         return True
     if re.match(r"^(incast|a2a)_pareto_xm_[0-9]+$", name):
         return True
+    if re.match(r"^(incast|a2a)_mono_[0-9]+$", name):
+        return True
+    if re.match(r"^(incast|a2a)_heavytail_(burst|sigma|temp)_[0-9]+(?:p[0-9]+)?$", name):
+        return True
     return False
 
 
@@ -58,6 +62,8 @@ def synthetic_dataset_names(include_low_temp=False):
         "a2a_bimodal",
         "incast_pareto",
         "a2a_pareto",
+        "incast_heavytail",
+        "a2a_heavytail",
         "incast_exponential_skewed",
         "a2a_exponential_skewed",
     ]

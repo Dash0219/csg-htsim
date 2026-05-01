@@ -76,9 +76,13 @@ LosslessInputQueue::receivePacket(Packet& pkt)
     //cout << timeAsMs(eventlist().now()) << " queue " << _name << " switch (" << _switch->_name << ") "<< " recv when paused pkt " << pkt.type() << " sz " << _queuesize << endl;        
 
     if (_queuesize > _maxsize){
-        cout << " Queue " << _name << " LOSSLESS not working! I should have dropped this packet" << _queuesize / Packet::data_packet_size() << endl;
+        cout << " Queue " << _name << " LOSSLESS not working! Dropping packet" << _queuesize / Packet::data_packet_size() << endl;
+        _queuesize -= pkt.size();
+        if (_queuesize < 0) _queuesize = 0;
+        pkt.free();
+        return;
     }
-    
+
     //tell the output queue we're here!
     if (pkt.nexthop() < pkt.route()->size()){
         //this should not work...
@@ -94,9 +98,9 @@ LosslessInputQueue::receivePacket(Packet& pkt)
 
 void LosslessInputQueue::completedService(Packet& pkt){
     _queuesize -= pkt.size();
+    if (_queuesize < 0) _queuesize = 0; // guard: overflow packets accepted above _maxsize can cause underflow
 
     //unblock if that is the case
-    assert(_queuesize >= 0);
     if ((uint64_t)_queuesize < _low_threshold && _state_recv == PAUSED) {
         _state_recv = READY;
         sendPause(0);

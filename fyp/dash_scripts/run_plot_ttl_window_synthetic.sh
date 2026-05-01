@@ -7,8 +7,13 @@ Usage:
   bash fyp/dash_scripts/run_plot_ttl_window_synthetic.sh [options]
 
 Options:
-  -d, --dataset NAME        Only plot one synthetic dataset (e.g., a2a_pareto)
-  -p, --protocol NAME       Transport protocol: ndp or hpcc (default: ndp)
+  -d, --dataset NAME        Only plot one synthetic dataset, or a family shorthand:
+                              incast_mono_n / a2a_mono_n
+                              incast_heavytail_burst_n / a2a_heavytail_burst_n
+                              incast_pareto_alpha_n / a2a_pareto_alpha_n
+                              incast_heavytail_sigma_n / a2a_heavytail_sigma_n
+                              incast_heavytail_temp_n / a2a_heavytail_temp_n
+  -p, --protocol NAME       Transport protocol: ndp, hpcc, or tcp (default: all three)
   -o, --out-dir DIR         Output directory (default: fyp/dash_results/synthetic/<protocol>/ttl_window/plots)
       --prefix NAME         Output filename prefix (default: ttl_window)
       --max-records N       Limit parsed records (default: 0 means all)
@@ -25,7 +30,7 @@ EOF
 DATASET="${DATASET:-}"
 LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
 LOW_TEMP_SUFFIX="${LOW_TEMP_SUFFIX:-low_temp_locality}"
-PROTOCOL="${PROTOCOL:-ndp}"
+PROTOCOLS="${PROTOCOL:-ndp hpcc tcp}"
 OUT_DIR="${OUT_DIR:-}"
 PREFIX="${PREFIX:-ttl_window}"
 MAX_RECORDS="${MAX_RECORDS:-0}"
@@ -45,7 +50,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -p|--protocol)
       [[ $# -ge 2 ]] || { echo "ERROR: --protocol requires a value" >&2; exit 1; }
-      PROTOCOL="$2"
+      PROTOCOLS="$2"
       shift 2
       ;;
     -o|--out-dir)
@@ -131,29 +136,61 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" ]]; then
-  echo "ERROR: --protocol must be ndp or hpcc" >&2
-  exit 1
-fi
-
-OUT_DIR="${OUT_DIR:-fyp/dash_results/synthetic/${PROTOCOL}/ttl_window/plots}"
-LOG_ROOT="fyp/dash_dataset/synthetic/${PROTOCOL}"
-mkdir -p "$OUT_DIR"
-
-cmd=(python3 fyp/dash_scripts/plot_ttl_windows.py --logs-dir "$LOG_ROOT" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --bins "$BINS" --key-level "$KEY_LEVEL" --event-mode "$EVENT_MODE" --qs-threshold "$QS_THRESHOLD")
-if [[ -n "$DATASET" ]]; then
-  cmd+=(--dataset "$DATASET")
-fi
-if [[ "$LOW_TEMP_LOCALITY" == "1" ]]; then
-  cmd+=(--low-temp-locality)
-fi
-if [[ "$MERGE_INPUTS" == "1" ]]; then
-  cmd+=(--merge-inputs)
-  if [[ -n "$MERGE_LABEL" ]]; then
-    cmd+=(--merge-label "$MERGE_LABEL")
+for proto in $PROTOCOLS; do
+  if [[ "$proto" != "ndp" && "$proto" != "hpcc" && "$proto" != "tcp" ]]; then
+    echo "ERROR: --protocol must be ndp, hpcc, or tcp (got: $proto)" >&2
+    exit 1
   fi
-fi
+done
 
-"${cmd[@]}"
+OUT_DIR_BASE="${OUT_DIR:-}"
+DATASET_ORIG="$DATASET"
 
-echo "Done. Synthetic TTL-window plots are under: $OUT_DIR"
+for PROTOCOL in $PROTOCOLS; do
+  echo "=== Protocol: $PROTOCOL ==="
+
+  OUT_DIR="${OUT_DIR_BASE:-fyp/dash_results/synthetic/${PROTOCOL}/ttl_window/plots}"
+  LOG_ROOT="fyp/dash_dataset/synthetic/${PROTOCOL}"
+  mkdir -p "$OUT_DIR"
+
+  DATASET="$DATASET_ORIG"
+
+  # Expand family shorthand into individual dataset names
+  FAMILY_DATASETS=()
+  if [[ "$DATASET" =~ ^(incast|a2a)_(mono|heavytail_burst|pareto_alpha|heavytail_sigma|heavytail_temp)_n$ ]]; then
+    case "$DATASET" in
+      *_mono_n)            prefix="${BASH_REMATCH[1]}_mono_" ;;
+      *_heavytail_burst_n) prefix="${BASH_REMATCH[1]}_heavytail_burst_" ;;
+      *_pareto_alpha_n)    prefix="${BASH_REMATCH[1]}_pareto_alpha_" ;;
+      *_heavytail_sigma_n) prefix="${BASH_REMATCH[1]}_heavytail_sigma_" ;;
+      *_heavytail_temp_n)  prefix="${BASH_REMATCH[1]}_heavytail_temp_" ;;
+    esac
+    while IFS= read -r log; do
+      [[ -n "$log" ]] || continue
+      name="$(basename "$log")"; name="${name#log_}"; name="${name%.txt}"
+      FAMILY_DATASETS+=("$name")
+    done < <(find "$LOG_ROOT" -maxdepth 1 -type f -name "log_${prefix}*.txt" | sort)
+    DATASET=""
+  fi
+
+  cmd=(python3 fyp/dash_scripts/plot_ttl_windows.py --logs-dir "$LOG_ROOT" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --bins "$BINS" --key-level "$KEY_LEVEL" --event-mode "$EVENT_MODE" --qs-threshold "$QS_THRESHOLD")
+  if [[ -n "$DATASET" ]]; then
+    cmd+=(--dataset "$DATASET")
+  fi
+  for ds in "${FAMILY_DATASETS[@]+"${FAMILY_DATASETS[@]}"}"; do
+    cmd+=(--dataset "$ds")
+  done
+  if [[ "$LOW_TEMP_LOCALITY" == "1" ]]; then
+    cmd+=(--low-temp-locality)
+  fi
+  if [[ "$MERGE_INPUTS" == "1" ]]; then
+    cmd+=(--merge-inputs)
+    if [[ -n "$MERGE_LABEL" ]]; then
+      cmd+=(--merge-label "$MERGE_LABEL")
+    fi
+  fi
+
+  "${cmd[@]}"
+
+  echo "Done [$PROTOCOL]. Synthetic TTL-window plots are under: $OUT_DIR"
+done

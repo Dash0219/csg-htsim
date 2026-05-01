@@ -7,9 +7,26 @@ Usage:
   bash fyp/dash_scripts/run_plot_cache_synthetic.sh [OUT_DIR] [options]
 
 Options:
-  -d, --dataset NAME        Only plot one synthetic dataset (e.g., a2a_pareto)
-  -p, --protocol NAME       Transport protocol: ndp or hpcc or tcp (default: ndp)
+  -d, --dataset NAME        Only plot one synthetic dataset, or a family shorthand:
+                              incast_mono_n / a2a_mono_n
+                              incast_heavytail_burst_n / a2a_heavytail_burst_n
+                              incast_pareto_alpha_n / a2a_pareto_alpha_n
+                              incast_heavytail_sigma_n / a2a_heavytail_sigma_n
+                              incast_heavytail_temp_n / a2a_heavytail_temp_n
+  -p, --protocol NAME       Transport protocol: ndp or hpcc or tcp (default: all three)
   -m, --mode MODE           route_changes | source_seen | congestion | all (default: all)
+  -c, --cache NAME          Only plot this cache design (repeatable; default: all).
+                            Valid names:
+                              Infinite
+                              LRU, FIFO, LFU
+                              LRUTtl(0.1ms), LRUTtl(0.5ms), LRUTtl(2ms), LRUTtl(10ms)
+                              OneHitWonderLRU, PendingAdmissionLRU
+                              AdaptiveAdmissionLRU, OnlineAdaptiveAdmissionLRU
+                              TimeLimitedBloomLRU
+                              TinyLFULRU, TinyCacheLRU
+                              PITCollapsedLRU
+                              FreshnessInvalidationLRU, CacheINTFreshnessLRU
+                              FlowLifetimeAdaptiveTTL
   -n, --scale-to-infinite   Scale y-axis using observed infinite/data range
       --scale-factor X      Headroom multiplier with --scale-to-infinite (default: 1.25)
       --max-concurrency N   Override concurrency marker capacity (default: inferred per dataset)
@@ -22,7 +39,6 @@ Options:
       --switch-budget N     Optional practical switch cache-size marker
       --hide-limit-labels   Draw limit lines without text labels
       --disable-policy NAME Hide one policy in plots (repeatable)
-      --include-policy NAME Keep only selected policies (repeatable)
       --hide-redundant-pairs Hide near-duplicate policies in final figures
   -h, --help                Show this help
 EOF
@@ -32,7 +48,7 @@ DATASET="${DATASET:-}"
 LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
 LOW_TEMP_SUFFIX="${LOW_TEMP_SUFFIX:-low_temp_locality}"
 MODE="${MODE:-all}"
-PROTOCOL="${PROTOCOL:-ndp}"
+PROTOCOLS="${PROTOCOL:-ndp hpcc tcp}"
 SCALE_TO_INFINITE="${SCALE_TO_INFINITE:-0}"
 SCALE_FACTOR="${SCALE_FACTOR:-1.25}"
 MAX_CONCURRENCY="${MAX_CONCURRENCY:-0}"
@@ -46,7 +62,7 @@ USE_CONGESTION_MARKERS=1
 HIDE_LIMIT_LABELS=0
 HIDE_REDUNDANT_PAIRS=0
 declare -a DISABLE_POLICIES=()
-declare -a INCLUDE_POLICIES=()
+declare -a CACHE_NAMES=()
 
 OUT_DIR=""
 while [[ $# -gt 0 ]]; do
@@ -64,7 +80,7 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --protocol requires a value" >&2
         exit 1
       fi
-      PROTOCOL="$2"
+      PROTOCOLS="$2"
       shift 2
       ;;
     -m|--mode)
@@ -143,20 +159,20 @@ while [[ $# -gt 0 ]]; do
       HIDE_LIMIT_LABELS=1
       shift
       ;;
+    -c|--cache)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --cache requires a value" >&2
+        exit 1
+      fi
+      CACHE_NAMES+=("$2")
+      shift 2
+      ;;
     --disable-policy)
       if [[ $# -lt 2 ]]; then
         echo "ERROR: --disable-policy requires a value" >&2
         exit 1
       fi
       DISABLE_POLICIES+=("$2")
-      shift 2
-      ;;
-    --include-policy)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --include-policy requires a value" >&2
-        exit 1
-      fi
-      INCLUDE_POLICIES+=("$2")
       shift 2
       ;;
     --hide-redundant-pairs)
@@ -213,17 +229,36 @@ case "$DATASET" in
     ;;
 esac
 
+# Expand family shorthands (e.g. a2a_mono_n -> plot all a2a_mono_* datasets)
+FAMILY_PREFIX=""
+if [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_mono_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_mono_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_burst_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_burst_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_pareto_alpha_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_pareto_alpha_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_sigma_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_sigma_"; DATASET=""
+elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_temp_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_temp_"; DATASET=""
+fi
+
+dataset_matches_family() {
+  local name="$1"
+  [[ -n "$FAMILY_PREFIX" && "$name" == "${FAMILY_PREFIX}"* ]]
+}
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" && "$PROTOCOL" != "tcp" ]]; then
-  echo "ERROR: --protocol must be ndp or hpcc or tcp" >&2
-  exit 1
-fi
+for proto in $PROTOCOLS; do
+  if [[ "$proto" != "ndp" && "$proto" != "hpcc" && "$proto" != "tcp" ]]; then
+    echo "ERROR: --protocol must be ndp or hpcc or tcp (got: $proto)" >&2
+    exit 1
+  fi
+done
 
-OUT_DIR="${OUT_DIR:-fyp/dash_results/synthetic/${PROTOCOL}/cache_sim}"
-FLOW_STATS_DIR="fyp/dash_results/synthetic/${PROTOCOL}/flow_stats"
-mkdir -p "$OUT_DIR"
+OUT_DIR_BASE="$OUT_DIR"
 
 count=0
 
@@ -246,8 +281,8 @@ join_csv() {
 if [[ ${#DISABLE_POLICIES[@]} -gt 0 ]]; then
   PLOT_ARGS+=(--exclude-policies "$(join_csv "${DISABLE_POLICIES[@]}")")
 fi
-if [[ ${#INCLUDE_POLICIES[@]} -gt 0 ]]; then
-  PLOT_ARGS+=(--include-policies "$(join_csv "${INCLUDE_POLICIES[@]}")")
+if [[ ${#CACHE_NAMES[@]} -gt 0 ]]; then
+  PLOT_ARGS+=(--include-policies "$(join_csv "${CACHE_NAMES[@]}")")
 fi
 
 infer_dataset_max_concurrency() {
@@ -260,7 +295,7 @@ infer_dataset_max_concurrency() {
   maxc=$(grep -E 'Peak concurrency:|Max peak concurrency' "$stats_file" 2>/dev/null \
     | sed -E 's/.*: *([0-9][0-9,]*).*/\1/' \
     | tr -d ',' \
-    | awk 'max<$1{max=$1} END{if(max>0) print max}')
+    | awk '$1+0==$1 && $1>0 {if($1>max) max=$1} END{if(max>0) print max}')
   if [[ -n "$maxc" ]]; then
     echo "$maxc"
   fi
@@ -276,7 +311,7 @@ infer_dataset_unique_flows() {
   uniq=$(grep -E 'Unique flows:' "$stats_file" 2>/dev/null \
     | sed -E 's/.*: *([0-9][0-9,]*).*/\1/' \
     | tr -d ',' \
-    | awk 'max<$1{max=$1} END{if(max>0) print max}')
+    | awk '$1+0==$1 && $1>0 {if($1>max) max=$1} END{if(max>0) print max}')
   if [[ -n "$uniq" ]]; then
     echo "$uniq"
   fi
@@ -409,6 +444,9 @@ plot_mode() {
       if [[ -n "$DATASET" && "$dataset_name" != "$DATASET" ]]; then
         continue
       fi
+      if [[ -n "$FAMILY_PREFIX" ]] && ! dataset_matches_family "$dataset_name"; then
+        continue
+      fi
       use_concurrency="0"
       use_unique_flows="0"
       declare -a markers=()
@@ -471,6 +509,9 @@ plot_mode() {
       if [[ -n "$DATASET" && "$dataset_name" != "$DATASET" ]]; then
         continue
       fi
+      if [[ -n "$FAMILY_PREFIX" ]] && ! dataset_matches_family "$dataset_name"; then
+        continue
+      fi
       use_concurrency="0"
       use_unique_flows="0"
       declare -a markers=()
@@ -519,25 +560,35 @@ plot_mode() {
   fi
 }
 
-if [[ "$MODE" == "route_changes" || "$MODE" == "all" ]]; then
-  plot_mode "route_changes" \
-    "fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/route_changes" \
-    "fyp/dash_results/synthetic/cache_sim/route_change/results_synthetic_*.csv" \
-    "results_synthetic_"
-fi
+for PROTOCOL in $PROTOCOLS; do
+  echo "=== Protocol: $PROTOCOL ==="
 
-if [[ "$MODE" == "source_seen" || "$MODE" == "all" ]]; then
-  plot_mode "source_seen" \
-    "fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/source_seen" \
-    "" \
-    "results_synthetic_source_seen_"
-fi
+  OUT_DIR="${OUT_DIR_BASE:-fyp/dash_results/synthetic/${PROTOCOL}/cache_sim}"
+  FLOW_STATS_DIR="fyp/dash_results/synthetic/${PROTOCOL}/flow_stats"
+  mkdir -p "$OUT_DIR"
 
-if [[ "$MODE" == "congestion" || "$MODE" == "all" ]]; then
-  plot_mode "congestion" \
-    "fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/congestion" \
-    "" \
-    "results_synthetic_congestion_"
-fi
+  if [[ "$MODE" == "route_changes" || "$MODE" == "all" ]]; then
+    plot_mode "route_changes" \
+      "fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/route_changes" \
+      "fyp/dash_results/synthetic/cache_sim/route_change/results_synthetic_*.csv" \
+      "results_synthetic_"
+  fi
 
-echo "Done. Plotted $count synthetic CSV file(s) to $OUT_DIR"
+  if [[ "$MODE" == "source_seen" || "$MODE" == "all" ]]; then
+    plot_mode "source_seen" \
+      "fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/source_seen" \
+      "" \
+      "results_synthetic_source_seen_"
+  fi
+
+  if [[ "$MODE" == "congestion" || "$MODE" == "all" ]]; then
+    plot_mode "congestion" \
+      "fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/congestion" \
+      "" \
+      "results_synthetic_congestion_"
+  fi
+
+  echo "Done [$PROTOCOL]. Plotted to $OUT_DIR"
+done
+
+echo "Done. Plotted $count synthetic CSV file(s) across protocols."

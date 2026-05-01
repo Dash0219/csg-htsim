@@ -8,7 +8,7 @@ Usage:
 
 Options:
   -d, --dataset NAME        Process one dataset or family shorthand (see below)
-  -p, --protocol NAME       Transport protocol: ndp, hpcc, or tcp (default: hpcc)
+  -p, --protocol NAME       Transport protocol: ndp, hpcc, or tcp (default: all three)
   -f, --fast                (no-op for congestion sim; kept for interface consistency)
       --no-fast
       --range-threshold N   Forward when |new_qs - cached_qs| > N bytes (default: 8192)
@@ -36,7 +36,7 @@ EOF
 DATASET="${DATASET:-}"
 TARGET_PATTERN="${TARGET_PATTERN:-}"
 LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
-PROTOCOL="${PROTOCOL:-hpcc}"
+PROTOCOLS="${PROTOCOL:-ndp hpcc tcp}"
 RANGE_THRESHOLD="${RANGE_THRESHOLD:-8192}"
 KEY_LEVEL="${KEY_LEVEL:-switch}"
 CAPACITY_PLOTS="${CAPACITY_PLOTS:-0}"
@@ -77,7 +77,7 @@ while [[ $# -gt 0 ]]; do
       if [[ $# -lt 2 ]]; then
         echo "ERROR: --protocol requires a value" >&2; exit 1
       fi
-      PROTOCOL="$2"; shift 2 ;;
+      PROTOCOLS="$2"; shift 2 ;;
     -f|--fast|--no-fast)
       shift ;;
     --range-threshold)
@@ -111,9 +111,12 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ "$PROTOCOL" != "ndp" && "$PROTOCOL" != "hpcc" && "$PROTOCOL" != "tcp" ]]; then
-  echo "ERROR: --protocol must be ndp, hpcc, or tcp" >&2; exit 1
-fi
+for proto in $PROTOCOLS; do
+  if [[ "$proto" != "ndp" && "$proto" != "hpcc" && "$proto" != "tcp" ]]; then
+    echo "ERROR: --protocol must be ndp, hpcc, or tcp (got: $proto)" >&2; exit 1
+  fi
+done
+
 if [[ "$KEY_LEVEL" != "switch" && "$KEY_LEVEL" != "flow" ]]; then
   echo "ERROR: --key-level must be switch or flow" >&2; exit 1
 fi
@@ -124,10 +127,6 @@ if [[ "$CAPACITY_PLOTS" != "0" && "$CAPACITY_PLOTS" != "1" ]]; then
   echo "ERROR: CAPACITY_PLOTS must be 0 or 1" >&2; exit 1
 fi
 
-OUT_DIR="fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/congestion"
-CAPACITY_DIR="${OUT_DIR}/capacity"
-CAPACITY_PLOTS_DIR="${CAPACITY_DIR}/plots"
-LOG_ROOT="fyp/dash_dataset/synthetic/${PROTOCOL}"
 LOW_TEMP_SUFFIX="${LOW_TEMP_SUFFIX:-low_temp_locality}"
 CAPACITY_PLOT_CAPACITIES="${CAPACITY_PLOT_CAPACITIES:-}"
 CAPACITY_PLOT_MIN_CAPACITY="${CAPACITY_PLOT_MIN_CAPACITY:-512}"
@@ -152,93 +151,104 @@ normalize_dataset_alias() {
   esac
 }
 
-if [[ -n "$DATASET" ]]; then
-  DATASET="$(normalize_dataset_alias "$DATASET")"
+DATASET_ORIG="$DATASET"
+if [[ -n "$DATASET_ORIG" ]]; then
+  DATASET_ORIG="$(normalize_dataset_alias "$DATASET_ORIG")"
 fi
 
-# Expand family shorthands
 FAMILY_PREFIX=""
-if [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_mono_n$ ]]; then
-  FAMILY_PREFIX="${BASH_REMATCH[1]}_mono_"; DATASET=""
-elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_burst_n$ ]]; then
-  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_burst_"; DATASET=""
-elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_pareto_alpha_n$ ]]; then
-  FAMILY_PREFIX="${BASH_REMATCH[1]}_pareto_alpha_"; DATASET=""
-elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_sigma_n$ ]]; then
-  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_sigma_"; DATASET=""
-elif [[ -n "$DATASET" && "$DATASET" =~ ^(incast|a2a)_heavytail_temp_n$ ]]; then
-  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_temp_"; DATASET=""
-elif [[ -n "$DATASET" ]]; then
-  if [[ "$LOW_TEMP_LOCALITY" == "1" ]] && ! is_low_dataset_name "$DATASET" && is_base_dataset_name "$DATASET"; then
-    DATASET="${DATASET}_${LOW_TEMP_SUFFIX}"
-  fi
-  if [[ "$LOW_TEMP_LOCALITY" == "0" ]] && is_low_dataset_name "$DATASET"; then
-    LOW_TEMP_LOCALITY=1
-  fi
-  if ! is_supported_dataset_name "$DATASET"; then
-    echo "ERROR: unsupported synthetic dataset '$DATASET'" >&2; exit 1
+DATASET_NORM="$DATASET_ORIG"
+if [[ -n "$DATASET_NORM" && "$DATASET_NORM" =~ ^(incast|a2a)_mono_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_mono_"; DATASET_NORM=""
+elif [[ -n "$DATASET_NORM" && "$DATASET_NORM" =~ ^(incast|a2a)_heavytail_burst_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_burst_"; DATASET_NORM=""
+elif [[ -n "$DATASET_NORM" && "$DATASET_NORM" =~ ^(incast|a2a)_pareto_alpha_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_pareto_alpha_"; DATASET_NORM=""
+elif [[ -n "$DATASET_NORM" && "$DATASET_NORM" =~ ^(incast|a2a)_heavytail_sigma_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_sigma_"; DATASET_NORM=""
+elif [[ -n "$DATASET_NORM" && "$DATASET_NORM" =~ ^(incast|a2a)_heavytail_temp_n$ ]]; then
+  FAMILY_PREFIX="${BASH_REMATCH[1]}_heavytail_temp_"; DATASET_NORM=""
+elif [[ -n "$DATASET_NORM" ]]; then
+  if ! is_supported_dataset_name "$DATASET_NORM"; then
+    echo "ERROR: unsupported synthetic dataset '$DATASET_NORM'" >&2; exit 1
   fi
 fi
 
-mkdir -p "$OUT_DIR" "$CAPACITY_DIR" "$CAPACITY_PLOTS_DIR"
+for PROTOCOL in $PROTOCOLS; do
+  echo "=== Protocol: $PROTOCOL ==="
 
-patterns=()
-if [[ -n "$DATASET" ]]; then
-  patterns=("$DATASET")
-elif [[ -n "$FAMILY_PREFIX" ]]; then
-  while IFS= read -r log; do
-    [[ -n "$log" ]] || continue
-    name="$(basename "$log")"
-    name="${name#log_}"; name="${name%.txt}"
-    is_supported_dataset_name "$name" || continue
-    patterns+=("$name")
-  done < <(find "$LOG_ROOT" -maxdepth 1 -type f -name "log_${FAMILY_PREFIX}*.txt" | sort)
-else
-  while IFS= read -r log; do
-    [[ -n "$log" ]] || continue
-    name="$(basename "$log")"
-    name="${name#log_}"; name="${name%.txt}"
-    is_supported_dataset_name "$name" || continue
-    if [[ "$LOW_TEMP_LOCALITY" == "1" ]]; then
-      is_low_dataset_name "$name" || continue
-    else
-      is_low_dataset_name "$name" && continue
+  OUT_DIR="${OUT_DIR:-fyp/dash_results/synthetic/${PROTOCOL}/cache_sim/congestion}"
+  CAPACITY_DIR="${OUT_DIR}/capacity"
+  CAPACITY_PLOTS_DIR="${CAPACITY_DIR}/plots"
+  LOG_ROOT="${LOG_ROOT:-fyp/dash_dataset/synthetic/${PROTOCOL}}"
+
+  DATASET="$DATASET_NORM"
+  if [[ -n "$DATASET" ]]; then
+    if [[ "$LOW_TEMP_LOCALITY" == "1" ]] && ! is_low_dataset_name "$DATASET" && is_base_dataset_name "$DATASET"; then
+      DATASET="${DATASET}_${LOW_TEMP_SUFFIX}"
     fi
-    patterns+=("$name")
-  done < <(find "$LOG_ROOT" -maxdepth 1 -type f -name 'log_*.txt' | sort)
-fi
-
-for p in "${patterns[@]}"; do
-  log="$LOG_ROOT/log_${p}.txt"
-  csv="$OUT_DIR/results_synthetic_congestion_${p}.csv"
-  if [[ ! -f "$log" ]]; then
-    echo "Skipping missing input: $log"
-    continue
   fi
-  echo "== congestion INT sweep: $p =="
 
-  sim_cmd=(python3 fyp/dash_scripts/cache_sim_congestion_int.py "$log"
-    --sweep
-    --quiet-table
-    --range-threshold "$RANGE_THRESHOLD"
-    --key-level "$KEY_LEVEL"
-    --csv "$csv")
+  mkdir -p "$OUT_DIR" "$CAPACITY_DIR" "$CAPACITY_PLOTS_DIR"
 
-  if [[ "$CAPACITY_PLOTS" == "1" ]]; then
-    capacity_csv="$CAPACITY_DIR/results_synthetic_congestion_${p}_capacity.csv"
-    dataset_plots_dir="${CAPACITY_PLOTS_DIR}/${p}"
-    mkdir -p "$dataset_plots_dir"
-    sim_cmd+=(--capacity-csv "$capacity_csv")
-    "${sim_cmd[@]}"
-    plot_cmd=(python3 fyp/dash_scripts/plot_cache_capacity.py "$capacity_csv"
-      --out-dir "$dataset_plots_dir"
-      --prefix "synthetic_congestion_${p}_capacity"
-      --min-capacity "$CAPACITY_PLOT_MIN_CAPACITY")
-    [[ -n "$CAPACITY_PLOT_CAPACITIES" ]] && plot_cmd+=(--capacities "$CAPACITY_PLOT_CAPACITIES")
-    "${plot_cmd[@]}"
+  patterns=()
+  if [[ -n "$DATASET" ]]; then
+    patterns=("$DATASET")
+  elif [[ -n "$FAMILY_PREFIX" ]]; then
+    while IFS= read -r log; do
+      [[ -n "$log" ]] || continue
+      name="$(basename "$log")"
+      name="${name#log_}"; name="${name%.txt}"
+      is_supported_dataset_name "$name" || continue
+      patterns+=("$name")
+    done < <(find "$LOG_ROOT" -maxdepth 1 -type f -name "log_${FAMILY_PREFIX}*.txt" | sort)
   else
-    "${sim_cmd[@]}"
+    while IFS= read -r log; do
+      [[ -n "$log" ]] || continue
+      name="$(basename "$log")"
+      name="${name#log_}"; name="${name%.txt}"
+      is_supported_dataset_name "$name" || continue
+      if [[ "$LOW_TEMP_LOCALITY" == "1" ]]; then
+        is_low_dataset_name "$name" || continue
+      else
+        is_low_dataset_name "$name" && continue
+      fi
+      patterns+=("$name")
+    done < <(find "$LOG_ROOT" -maxdepth 1 -type f -name 'log_*.txt' | sort)
   fi
-done
 
-echo "Done. Congestion CSV outputs are under: $OUT_DIR"
+  for p in "${patterns[@]}"; do
+    log="$LOG_ROOT/log_${p}.txt"
+    csv="$OUT_DIR/results_synthetic_congestion_${p}.csv"
+    if [[ ! -f "$log" ]]; then
+      echo "Skipping missing input: $log"
+      continue
+    fi
+    echo "== congestion INT sweep [$PROTOCOL]: $p =="
+
+    sim_cmd=(python3 fyp/dash_scripts/cache_sim_congestion_int.py "$log"
+      --sweep
+      --quiet-table
+      --range-threshold "$RANGE_THRESHOLD"
+      --key-level "$KEY_LEVEL"
+      --csv "$csv")
+
+    if [[ "$CAPACITY_PLOTS" == "1" ]]; then
+      capacity_csv="$CAPACITY_DIR/results_synthetic_congestion_${p}_capacity.csv"
+      dataset_plots_dir="${CAPACITY_PLOTS_DIR}/${p}"
+      mkdir -p "$dataset_plots_dir"
+      sim_cmd+=(--capacity-csv "$capacity_csv")
+      "${sim_cmd[@]}"
+      plot_cmd=(python3 fyp/dash_scripts/plot_cache_capacity.py "$capacity_csv"
+        --out-dir "$dataset_plots_dir"
+        --prefix "synthetic_congestion_${p}_capacity"
+        --min-capacity "$CAPACITY_PLOT_MIN_CAPACITY")
+      [[ -n "$CAPACITY_PLOT_CAPACITIES" ]] && plot_cmd+=(--capacities "$CAPACITY_PLOT_CAPACITIES")
+      "${plot_cmd[@]}"
+    else
+      "${sim_cmd[@]}"
+    fi
+  done
+
+  echo "Done [$PROTOCOL]. Congestion CSV outputs are under: $OUT_DIR"
+done

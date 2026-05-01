@@ -1,11 +1,12 @@
-# DASH Dataset Pipelines (IMC, MAWI, Synthetic)
+# Project Pipelines (IMC, MAWI, Synthetic)
 
 This guide reflects the current layout:
 
 - IMC data root: `fyp/dash_dataset/imc`
 - MAWI data root: `fyp/dash_dataset/mawi`
-- Synthetic logs: `fyp/dash_dataset/synthetic/{ndp,hpcc}`
-- Results root: `dash_results`
+- Synthetic logs: `fyp/dash_dataset/synthetic/{ndp,hpcc,tcp}`
+- Results root: `fyp/dash_results`
+- Experiment findings: `fyp/dash_experiments/findings`
 
 All plotting/cache outputs are written under `fyp/dash_results/...`.
 
@@ -24,18 +25,7 @@ Then place real datasets in:
 - MAWI raw dump: `fyp/dash_dataset/mawi/200803180000.dump`
 - Optional MAWI text dump: `fyp/dash_dataset/mawi/200803180000.dump.txt`
 
-Synthetic logs are generated locally (no external input needed):
-
-```bash
-cd sim/datacenter
-bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp
-bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol hpcc
-# Sweep-family shorthands (one topology at a time)
-bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset a2a_mono_n
-bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset a2a_mono_burst_n
-bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset a2a_pareto_alpha_n
-bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset a2a_pareto_temp_n
-```
+Synthetic logs are generated locally (see Section 3).
 
 ## 1. IMC Pipeline
 
@@ -72,8 +62,6 @@ bash fyp/dash_scripts/run_cache_sim_imc.sh
 IMC_MAX_PACKETS_PER_SPLIT=7000000 bash fyp/dash_scripts/run_cache_sim_imc.sh
 ```
 
-The runner now streams progress to the terminal and writes the same output to run logs.
-
 Outputs:
 
 - `fyp/dash_results/imc/univ1/cache_sim/source_seen/results_univ1_source_seen_top8.csv`
@@ -82,8 +70,6 @@ Outputs:
 - `fyp/dash_results/imc/univ2/cache_sim/source_seen/capacity/results_univ2_source_seen_top8_capacity.csv`
 - `fyp/dash_results/imc/univ1/cache_sim/source_seen/capacity/plots/univ1/`
 - `fyp/dash_results/imc/univ2/cache_sim/source_seen/capacity/plots/univ2/`
-- `fyp/dash_results/imc/univ1/cache_sim/source_seen/run_univ1_source_seen_top8.out`
-- `fyp/dash_results/imc/univ2/cache_sim/source_seen/run_univ2_source_seen_top8.out`
 - Per-sink split CSVs in corresponding `..._splits/` directories
 
 ### 1.4 Plots and Stats
@@ -141,6 +127,16 @@ Outputs:
 - `fyp/dash_results/imc/univ1/temporal_locality/plots/`
 - `fyp/dash_results/imc/univ2/temporal_locality/plots/`
 
+#### 1.4.6 Inter-Record TTL Window Distribution
+```bash
+bash fyp/dash_scripts/run_plot_ttl_window_imc_top8.sh
+```
+
+Outputs:
+
+- `fyp/dash_results/imc/univ1/ttl_window/plots/`
+- `fyp/dash_results/imc/univ2/ttl_window/plots/`
+
 ## 2. MAWI Pipeline
 
 ### 2.1 Input
@@ -168,7 +164,7 @@ bash fyp/dash_scripts/run_cache_sim_mawi.sh
 
 Outputs:
 
-- `fyp/dash_results/mawi/cache_sim/source_seen/`
+- `fyp/dash_results/mawi/cache_sim/source_seen/results_mawi_source_seen_top8.csv`
 - `fyp/dash_results/mawi/cache_sim/source_seen/capacity/results_mawi_source_seen_top8_capacity.csv`
 - `fyp/dash_results/mawi/cache_sim/source_seen/capacity/plots/mawi/`
 
@@ -221,87 +217,147 @@ Outputs:
 
 - `fyp/dash_results/mawi/temporal_locality/plots/`
 
+#### 2.4.6 Inter-Record TTL Window Distribution
+```bash
+bash fyp/dash_scripts/run_plot_ttl_window_mawi_top8.sh
+```
+
+Outputs:
+
+- `fyp/dash_results/mawi/ttl_window/plots/`
+
 ## 3. Synthetic Pipeline
 
-Synthetic dataset suite is now scoped to two parts only.
+### 3.1 Dataset Families
 
-Part 1 (proof-of-concept):
+Base datasets (one simulation run per dataset):
 
 - `incast_mono`, `a2a_mono`
 - `incast_bimodal`, `a2a_bimodal`
 - `incast_pareto`, `a2a_pareto`
+- `incast_heavytail`, `a2a_heavytail`
 - `incast_exponential_skewed`, `a2a_exponential_skewed`
 
-Part 2 (sweeps):
+Sweep datasets (multiple values per family):
 
-- `incast_mono_burst_<N>`, `a2a_mono_burst_<N>` where `N in {8,16,32,64,128,256}` and flow size is fixed to 256 packets
-- `incast_pareto_alpha_<A>`, `a2a_pareto_alpha_<A>` where `<A>` is an alpha token (`1p0`, `1p5`, ...)
-- `incast_pareto_temp_<N>`, `a2a_pareto_temp_<N>` where `N in {1,2,4,8}`
-- `incast_mono_<N>`, `a2a_mono_<N>` where `N in {1,2,4,...,4096}` packet counts
+- `(incast|a2a)_mono_<N>` — flow-size sweep, N in {1,2,4,...,4096} packets
+- `(incast|a2a)_heavytail_burst_<N>` — path burstiness sweep, N in {8,16,32,64,128,256} (NDP only)
+- `(incast|a2a)_heavytail_sigma_<S>` — flow-size concentration sweep, S tokenized (e.g. `1p0`, `1p5`, `2p0`)
+- `(incast|a2a)_heavytail_temp_<N>` — temporal locality sweep, N in {1,2,4,8}
+- `(incast|a2a)_pareto_alpha_<A>` — Pareto skew sweep, A tokenized (e.g. `1p0`, `1p5`, `2p0`)
 
+All three protocols (ndp, hpcc, tcp) are supported unless noted otherwise.
 
-### 3.1 Generate Synthetic Datasets
+### 3.2 Generate Synthetic Datasets
+
+Run all datasets for a protocol:
 
 ```bash
 bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp
 bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol hpcc
-# Example: run one skew dataset only
-bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset a2a_pareto_alpha_1p0
-# Example: explicit alpha sweep values (x_m is fixed by PARETO_SKEW_BASE_XM, default 1)
-PARETO_ALPHA_SWEEP_VALUES=1.0,1.5,2.0,2.5,3.0,3.5 \
-  bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp
+bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol tcp
 ```
 
-Synthetic protocol-specific logs are written to:
+Run one dataset or sweep family only:
+
+```bash
+bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset incast_heavytail
+bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset incast_heavytail_burst_n
+bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset incast_heavytail_sigma_n
+bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --dataset incast_mono_n
+```
+
+Useful environment variable overrides:
+
+```bash
+# Override burst sweep values (NDP only; default: 8,16,32,64,128,256)
+BURST_SWEEP_VALUES=8,64,256 bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp
+
+# Override sigma sweep values (default: 0p5,1p0,1p5,2p0,2p5,3p0)
+HEAVYTAIL_SIGMA_SWEEP_VALUES=1p0,2p0,3p0 bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp
+
+# Fix random seed
+bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol ndp --seed 42
+```
+
+Synthetic logs are written to:
 
 - `fyp/dash_dataset/synthetic/ndp/log_*.txt`
 - `fyp/dash_dataset/synthetic/hpcc/log_*.txt`
+- `fyp/dash_dataset/synthetic/tcp/log_*.txt`
 
-### 3.2 Cache Simulation
+### 3.3 Cache Simulation
+
+Route-change context:
 
 ```bash
 bash fyp/dash_scripts/run_cache_sim_synthetic.sh --protocol ndp
 bash fyp/dash_scripts/run_cache_sim_synthetic.sh --protocol hpcc
-bash fyp/dash_scripts/run_cache_sim_synthetic.sh --protocol ndp --dataset a2a_pareto_alpha_1p0
+bash fyp/dash_scripts/run_cache_sim_synthetic.sh --protocol tcp
+# Single dataset or family:
+bash fyp/dash_scripts/run_cache_sim_synthetic.sh --protocol ndp --dataset incast_heavytail
+bash fyp/dash_scripts/run_cache_sim_synthetic.sh --protocol ndp --dataset incast_heavytail_sigma_n
+```
 
+Source-seen context:
+
+```bash
 bash fyp/dash_scripts/run_cache_sim_source_seen_synthetic.sh --protocol ndp
 bash fyp/dash_scripts/run_cache_sim_source_seen_synthetic.sh --protocol hpcc
-
-bash fyp/dash_scripts/run_cache_sim_congestion_synthetic.sh --protocol hpcc --qs-threshold 50000
 ```
+
+Congestion context:
+
+```bash
+bash fyp/dash_scripts/run_cache_sim_congestion_synthetic.sh --protocol ndp
+bash fyp/dash_scripts/run_cache_sim_congestion_synthetic.sh --protocol ndp --range-threshold 8192 --key-level switch
+```
+
+Add `--capacity-plots` to any of the above to also generate per-dataset capacity sweep CSVs and plots.
 
 Outputs:
 
-- `fyp/dash_results/synthetic/{ndp,hpcc}/cache_sim/route_changes/results_synthetic_*.csv`
-- `fyp/dash_results/synthetic/{ndp,hpcc}/cache_sim/source_seen/results_synthetic_source_seen_*.csv`
-- `fyp/dash_results/synthetic/{ndp,hpcc}/cache_sim/{route_changes,source_seen,congestion}/capacity/results_*_capacity.csv`
-- `fyp/dash_results/synthetic/{ndp,hpcc}/cache_sim/{route_changes,source_seen,congestion}/capacity/plots/<dataset>/`
+- `fyp/dash_results/synthetic/<protocol>/cache_sim/route_changes/results_synthetic_*.csv`
+- `fyp/dash_results/synthetic/<protocol>/cache_sim/source_seen/results_synthetic_source_seen_*.csv`
+- `fyp/dash_results/synthetic/<protocol>/cache_sim/congestion/results_synthetic_congestion_*.csv`
+- `fyp/dash_results/synthetic/<protocol>/cache_sim/{route_changes,source_seen,congestion}/capacity/` (with `--capacity-plots`)
 
-### 3.3 Plots and Stats
+### 3.4 Plots and Stats
 
-#### 3.3.1 Cache Performance
+#### 3.4.1 Cache Performance
 ```bash
 bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol ndp
-bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol hpcc --scale-to-infinite
-bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol hpcc --mode source_seen --scale-to-infinite --scale-factor 1.4
-bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol hpcc --mode congestion --qs-threshold 50000 --key-level switch
+bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol ndp --mode source_seen
+bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol ndp --mode congestion --key-level switch
+bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol ndp --scale-to-infinite
+bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol ndp --switch-budget 512 --hide-redundant-pairs
+# Single dataset:
+bash fyp/dash_scripts/run_plot_cache_synthetic.sh --protocol ndp --dataset incast_heavytail
+```
+
+Batch plot across all protocols and modes:
+
+```bash
+bash fyp/dash_scripts/run_plot_cache_batch.sh
+bash fyp/dash_scripts/run_plot_cache_batch.sh --hide-redundant-pairs --switch-budget 512
 ```
 
 Outputs:
 
-- `fyp/dash_results/synthetic/{ndp,hpcc}/cache_sim/{route_changes,source_seen,congestion}/plots/`
+- `fyp/dash_results/synthetic/<protocol>/cache_sim/{route_changes,source_seen,congestion}/plots/`
 
-#### 3.3.2 Flow Stats Summary
+#### 3.4.2 Flow Stats Summary
 ```bash
 bash fyp/dash_scripts/run_flow_stats_synthetic.sh --protocol ndp
 bash fyp/dash_scripts/run_flow_stats_synthetic.sh --protocol hpcc
+bash fyp/dash_scripts/run_flow_stats_synthetic.sh --protocol tcp
 ```
 
 Outputs:
 
-- `fyp/dash_results/synthetic/{ndp,hpcc}/flow_stats/`
+- `fyp/dash_results/synthetic/<protocol>/flow_stats/`
 
-#### 3.3.3 Flow Size Distribution
+#### 3.4.3 Flow Size Distribution
 ```bash
 bash fyp/dash_scripts/run_plot_flow_distribution_synthetic.sh --protocol ndp
 bash fyp/dash_scripts/run_plot_flow_distribution_synthetic.sh --protocol hpcc
@@ -309,9 +365,9 @@ bash fyp/dash_scripts/run_plot_flow_distribution_synthetic.sh --protocol hpcc
 
 Outputs:
 
-- `fyp/dash_results/synthetic/{ndp,hpcc}/flow_size/plots/`
+- `fyp/dash_results/synthetic/<protocol>/flow_size/plots/`
 
-#### 3.3.4 Flow Lifetime Distribution
+#### 3.4.4 Flow Lifetime Distribution
 ```bash
 bash fyp/dash_scripts/run_plot_flow_lifetime_synthetic.sh --protocol ndp
 bash fyp/dash_scripts/run_plot_flow_lifetime_synthetic.sh --protocol hpcc
@@ -319,9 +375,9 @@ bash fyp/dash_scripts/run_plot_flow_lifetime_synthetic.sh --protocol hpcc
 
 Outputs:
 
-- `fyp/dash_results/synthetic/{ndp,hpcc}/flow_lifetime/plots/`
+- `fyp/dash_results/synthetic/<protocol>/flow_lifetime/plots/`
 
-#### 3.3.5 Flow Temporal Locality
+#### 3.4.5 Flow Temporal Locality
 ```bash
 bash fyp/dash_scripts/run_plot_temporal_locality_synthetic.sh --protocol ndp
 bash fyp/dash_scripts/run_plot_temporal_locality_synthetic.sh --protocol hpcc
@@ -329,149 +385,112 @@ bash fyp/dash_scripts/run_plot_temporal_locality_synthetic.sh --protocol hpcc
 
 Outputs:
 
-- `fyp/dash_results/synthetic/{ndp,hpcc}/temporal_locality/plots/`
+- `fyp/dash_results/synthetic/<protocol>/temporal_locality/plots/`
+
+#### 3.4.6 Inter-Record TTL Window Distribution
+```bash
+bash fyp/dash_scripts/run_plot_ttl_window_synthetic.sh --protocol ndp
+bash fyp/dash_scripts/run_plot_ttl_window_synthetic.sh --protocol ndp --key-level source
+bash fyp/dash_scripts/run_plot_ttl_window_synthetic.sh --protocol ndp --dataset incast_heavytail
+```
+
+Outputs:
+
+- `fyp/dash_results/synthetic/<protocol>/ttl_window/plots/`
 
 ## 4. Experiment Suite
 
-Run all four experiments over synthetic cache CSVs:
+The experiment suite runs each entry in `fyp/dash_experiments/experiments.txt` across five seeds, then aggregates results into `fyp/dash_experiments/findings/`.
 
-```bash
-bash fyp/dash_scripts/run_experiments.sh --protocol ndp --topology a2a
-bash fyp/dash_scripts/run_experiments.sh --protocol ndp --topology incast
-bash fyp/dash_scripts/run_experiments.sh --protocol hpcc --topology a2a
-bash fyp/dash_scripts/run_experiments.sh --protocol hpcc --topology incast
+### 4.1 Configure Experiments
+
+Experiments are declared in `fyp/dash_experiments/experiments.txt`. Each non-comment line has three fields:
+
+```
+protocol  dataset  context
 ```
 
-Useful options:
+Where `context` is one of `route_changes`, `source_seen`, or `congestion`. Dataset shorthands ending in `_n` expand to the full sweep family (e.g. `incast_heavytail_sigma_n` runs all sigma values).
 
-- `--experiments 1,2,3,4` to select a subset
-- `--pareto-alpha-values 1.0,1.5,2.0,2.5,3.0,3.5`
-- `--temporal-values 1,2,4,8`
-- `--exp34-temporal-all` (default) or `--exp34-temporal-tail`
-- `--anchor <topology>_pareto_alpha_1p0` to override the default anchor dataset
-- `--no-generate` to fail-fast if any required dataset/CSV is missing
+### 4.2 Run Experiments
 
-The script is reuse-first:
-
-- It checks whether synthetic logs and cache CSVs already exist.
-- It only invokes dataset generation and cache simulation when required artifacts are missing.
-- With `--no-generate`, it fails fast instead of regenerating.
-
-Result layout:
-
-- `fyp/dash_results/experiments/exp1_workload_matrix/`
-- `fyp/dash_results/experiments/exp2_pressure/`
-- `fyp/dash_results/experiments/exp3_admission/`
-- `fyp/dash_results/experiments/exp4_ttl_freshness/`
-
-Experiment dataset design summary:
-
-- Exp1 workload matrix axes: `pareto_alpha`, `mono_burst`, `mono_<N>`, and `pareto_temp`
-- Exp2 pressure sweep: anchor `pareto_alpha_1p0` + `mono_burst_64` + `mono_256` + temporal tail dataset
-- Exp3/Exp4 studies: anchor + `mono_burst_64` + `mono_256` + temporal set(s) selected by `--exp34-temporal-all|--exp34-temporal-tail`
-
-Experiment mapping:
-
-- `1`: Workload matrix (4 axes)
-- `2`: Pressure sweep (capacity-pressure breakdown)
-- `3`: Admission study (admission-family deltas vs LRU)
-- `4`: TTL/freshness study (TTL/freshness failure analysis)
-
-## 5. Cache Design Provenance
-
-Active baseline policies:
-
-- `Infinite`
-- `LRU`
-- `FIFO`
-- `LFU`
-- `LRUTTL`
-
-Active admission / freshness policies:
-
-- `OneHitWonderLRU`
-- `PendingAdmissionLRU`
-- `PITCollapsedLRU`
-- `AdaptiveAdmissionLRU`
-- `OnlineAdaptiveAdmissionLRU`
-- `TimeLimitedBloomLRU`
-- `TinyLFULRU`
-- `TinyCacheLRU`
-- `FreshnessInvalidationLRU`
-- `CacheINTFreshnessLRU`
-- `FlowLifetimeAdaptiveTTL`
-
-Paper-backed policies:
-
-- `TinyLFULRU` -> [TinyLFU: A Highly Efficient Cache Admission Policy](sim/datacenter/dash_papers/tiny_lfu.pdf)
-- `TinyCacheLRU` -> [TinyCache - An Effective Cache Admission Filter](sim/datacenter/dash_papers/tiny_cache.pdf)
-- `OneHitWonderLRU` -> [Algorithmic Nuggets in Content Delivery](sim/datacenter/dash_papers/algorithmic_nuggets.pdf)
-- `TimeLimitedBloomLRU` -> [Time-limited Bloom Filter](sim/datacenter/dash_papers/time-limited_BF.pdf)
-- `CacheINTFreshnessLRU` -> [Cache-INT: A new approach to optimize in-network telemetry](sim/datacenter/dash_papers/cache_int.pdf)
-
-Implemented in this repo without a source paper pinned in `dash_papers`:
-
-- `PITCollapsedLRU` - PIT-inspired inflight collapsing cache
-- `PendingAdmissionLRU` - legacy exact second-touch admission baseline
-- `AdaptiveAdmissionLRU` - pressure-adaptive admission controller
-- `OnlineAdaptiveAdmissionLRU` - multi-mode adaptive admission controller
-- `FreshnessInvalidationLRU` - freshness-based invalidation policy
-- `FlowLifetimeAdaptiveTTL` - lifetime-aware adaptive freshness window
-
-Archived / no longer surfaced by the default CLIs:
-
-- `VolatilityAwareLRU`
-- `SegmentedLRU`
-- `TwoFilterOHWLRU`
-- `DualFreshnessLRU`
-- `OnlineAdaptiveDualTTL`
-
-## 6. Cache Testing
-
-Run from repository root.
-
-Install test dependencies:
+Sequential mode (one entry at a time, 5 seeds each):
 
 ```bash
-./.venv/bin/python -m pip install -r fyp/dash_tests/requirements.txt
+bash fyp/dash_scripts/run_experiments.sh
 ```
 
-Run cache unit tests only:
+Parallel mode (up to 8 concurrent leaf jobs by default):
 
 ```bash
-./.venv/bin/python -m pytest fyp/dash_tests/test_cache_implementations.py -q
+bash fyp/dash_scripts/run_experiments.sh --parallel
+bash fyp/dash_scripts/run_experiments.sh --parallel --jobs 4
 ```
 
-Run cache tests with coverage gate (default `COVERAGE_MIN=100`):
+Run a single entry by 1-based index:
 
 ```bash
-bash fyp/dash_tests/run_cache_tests.sh
+bash fyp/dash_scripts/run_experiments.sh --entry 1
+bash fyp/dash_scripts/run_experiments.sh --parallel --entry 3
 ```
 
-Override coverage threshold for iterative runs:
+Each entry runs the full pipeline for each seed: htsim → flow stats → cache sim → temporal locality plot → flow distribution plot. After all 5 seeds complete, results are aggregated into `fyp/dash_experiments/findings/<subdir>/`.
+
+Aggregate CSVs contain per-policy mean and 95% CI across seeds and are named `mean_ci95_<protocol>_<dataset>.csv`.
+
+### 4.3 Plan Parallel Execution
+
+To see how experiments are grouped into conflict-free parallel waves (entries sharing a protocol and dataset family cannot run concurrently):
 
 ```bash
-COVERAGE_MIN=80 bash fyp/dash_tests/run_cache_tests.sh
+python3 fyp/dash_scripts/schedule_experiments.py
+# Print the actual bash commands for each wave:
+python3 fyp/dash_scripts/schedule_experiments.py --commands
 ```
 
-## 7. Notes
+### 4.4 Aggregate Results Manually
+
+To re-aggregate specific result CSVs from already-completed seed runs without rerunning:
+
+```bash
+python3 fyp/dash_scripts/aggregate_runs.py \
+  --inputs fyp/dash_experiments/run{1,2,3,4,5}/results/cache_sim/route_changes/ndp/results_synthetic_incast_heavytail.csv \
+  --output fyp/dash_experiments/findings/8_policy_ranking/mean_ci95_ndp_incast_heavytail.csv
+```
+
+### 4.5 Plot Findings
+
+After findings are populated, generate summary plots from the aggregated CSVs:
+
+```bash
+python3 fyp/dash_scripts/plot_chapter5_figures.py
+```
+
+Outputs:
+
+- `fyp/dash_report/img/obs1_skew_sweep.png` — suppression vs sigma sweep (oracle / LRU / best, with 95% CI)
+- `fyp/dash_report/img/obs2_burst_sweep.png` — suppression vs burst sweep (oracle / LRU / best, with 95% CI)
+- `fyp/dash_report/img/obs8_policy_ranking.png` — mean forward efficiency vs capacity (all policies)
+
+Required findings directories:
+
+- `fyp/dash_experiments/findings/3_skew_sweep/`
+- `fyp/dash_experiments/findings/2_burst_sweep/`
+- `fyp/dash_experiments/findings/8_policy_ranking/`
+
+## 5. Notes
 
 - IMC/MAWI sink readers consume `.txt` split files; IMC wrappers also tolerate legacy `.log` split files.
-- Cache plot scripts can draw toggleable vertical cache-capacity markers for:
-	- max concurrent flows (`--max-concurrency N`, `--no-max-concurrency`)
-	- total unique flows (`--unique-flows N`, `--no-unique-flows`)
-	- congestion mode replacements: peak congested keys and unique congested keys (inferred from `--qs-threshold` and `--key-level`; disable via `--no-congestion-markers`)
-	- practical switch budget (`--switch-budget N`)
-- To enable automatic max-concurrency and unique-flow markers, run flow-stats first so summaries exist:
-	- `bash fyp/dash_scripts/run_flow_stats_imc.sh`
-	- `bash fyp/dash_scripts/run_flow_stats_mawi.sh`
-	- `bash fyp/dash_scripts/run_flow_stats_synthetic.sh --protocol ndp`
-	- `bash fyp/dash_scripts/run_flow_stats_synthetic.sh --protocol hpcc`
-- For IMC/MAWI split plots, marker inference is split-specific (each split CSV tries to read its matching
-	`*_flow_stats.txt` file, while the total CSV uses `*_all_flow_stats.txt`).
+- Cache plot scripts can draw toggleable vertical cache-capacity markers:
+  - max concurrent flows (`--max-concurrency N`, `--no-max-concurrency`)
+  - total unique flows (`--unique-flows N`, `--no-unique-flows`)
+  - congestion mode: peak and unique congested keys (inferred from `--qs-threshold` and `--key-level`; disable via `--no-congestion-markers`)
+  - practical switch budget (`--switch-budget N`)
+- To enable automatic max-concurrency and unique-flow markers, run flow-stats first so summaries exist.
 - Policy visibility can be toggled at plot time without re-running simulation:
-	- hide one or more policies: `--disable-policy POLICY` (repeatable)
-	- keep only selected policies: `--include-policy POLICY` (repeatable)
-	- hide near-duplicate defaults: `--hide-redundant-pairs`
-- If layout changes again, update wrapper scripts first (`run_*_imc.sh`, `run_*_mawi.sh`) and then refresh this guide.
-- HPCC route-change sweeps can under-represent path churn with default `ecmp_host` routing because per-flow paths are often stable; use NDP synthetic runs for route-change-centric evaluation and HPCC runs for queue/congestion-centric evaluation.
+  - hide one or more policies: `--disable-policy POLICY` (repeatable)
+  - keep only selected policies: `--include-policy POLICY` (repeatable)
+  - hide near-duplicate defaults: `--hide-redundant-pairs`
+- For IMC/MAWI split plots, marker inference is split-specific (each split CSV tries to read its matching `*_flow_stats.txt`; the total CSV uses `*_all_flow_stats.txt`).
+- NDP is the primary protocol for route-change and source-seen evaluations. HPCC/TCP route-change results often show lower path churn due to ECMP per-flow routing; use NDP for route-change-centric analysis.
+- HPCC burst sweep datasets are not meaningful (ECMP routing is stable by design); use NDP burst sweep for path-stability evaluation.
