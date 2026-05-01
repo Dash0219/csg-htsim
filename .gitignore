@@ -10,6 +10,7 @@ logout.dat
 /sim/tests/htsim_*
 
 *.txt
+!fyp/experiments/experiments.txt
 .vscode/
 
 # Generated experiment and analysis artifacts
@@ -19,7 +20,10 @@ logout.dat
 /fyp/dataset/
 /fyp/papers/
 /fyp/report/
-/fyp/experiments/
+/fyp/experiments/run*/
+/fyp/experiments/logs/
+/fyp/experiments/findings/
+!/fyp/experiments/experiments.txt
 
 **/__pycache__/
 

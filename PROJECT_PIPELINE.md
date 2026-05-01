@@ -10,9 +10,21 @@ This guide reflects the current layout:
 
 All plotting/cache outputs are written under `fyp/results/...`.
 
-## 0. Workspace Setup
+## 0. Build and Workspace Setup
 
-Create the expected dataset/results directory tree first:
+### 0.1 Build the Simulator
+
+htsim is written in C++ with no external dependencies. Build all protocol binaries from the `sim/` directory:
+
+```bash
+cd sim && make
+```
+
+This produces `sim/datacenter/htsim_ndp`, `sim/datacenter/htsim_hpcc`, and `sim/datacenter/htsim_tcp`. The synthetic pipeline scripts expect these binaries to exist before running.
+
+### 0.2 Create Workspace Directories
+
+Create the expected dataset/results directory tree:
 
 ```bash
 bash fyp/scripts/setup_workspace.sh
@@ -455,28 +467,8 @@ To re-aggregate specific result CSVs from already-completed seed runs without re
 ```bash
 python3 fyp/scripts/aggregate_runs.py \
   --inputs fyp/experiments/run{1,2,3,4,5}/results/cache_sim/route_changes/ndp/results_synthetic_incast_heavytail.csv \
-  --output fyp/experiments/findings/8_policy_ranking/mean_ci95_ndp_incast_heavytail.csv
+  --output fyp/experiments/findings/ndp_incast_heavytail_route_changes/mean_ci95_ndp_incast_heavytail.csv
 ```
-
-### 4.5 Plot Findings
-
-After findings are populated, generate summary plots from the aggregated CSVs:
-
-```bash
-python3 fyp/scripts/plot_chapter5_figures.py
-```
-
-Outputs:
-
-- `fyp/report/img/obs1_skew_sweep.png` — suppression vs sigma sweep (oracle / LRU / best, with 95% CI)
-- `fyp/report/img/obs2_burst_sweep.png` — suppression vs burst sweep (oracle / LRU / best, with 95% CI)
-- `fyp/report/img/obs8_policy_ranking.png` — mean forward efficiency vs capacity (all policies)
-
-Required findings directories:
-
-- `fyp/experiments/findings/3_skew_sweep/`
-- `fyp/experiments/findings/2_burst_sweep/`
-- `fyp/experiments/findings/8_policy_ranking/`
 
 ## 5. Notes
 

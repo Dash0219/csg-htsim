@@ -115,7 +115,7 @@ DIRS=(
   "fyp/results/synthetic/tcp/flow_concurrency/plots"
 
   "fyp/experiments/logs"
-  
+
   "fyp/experiments/run1/dataset/raw_logs"
   "fyp/experiments/run1/dataset/connection_matrices"
   "fyp/experiments/run1/results/flow_stats"
@@ -161,23 +161,14 @@ DIRS=(
   "fyp/experiments/run5/results/cache_sim/source_seen"
   "fyp/experiments/run5/results/cache_sim/congestion"
 
-  "fyp/experiments/findings/1_flow_size_sweep"
-  "fyp/experiments/findings/2_burst_sweep"
-  "fyp/experiments/findings/3_skew_sweep"
-  "fyp/experiments/findings/4_source_seen_vs_route_change"
-  "fyp/experiments/findings/5_failure_mode_baselines"
-  "fyp/experiments/findings/6_concurrent_flow_threshold"
-  "fyp/experiments/findings/7_congestion_incast_vs_a2a"
-  "fyp/experiments/findings/8_policy_ranking"
+  "fyp/experiments/findings"
 )
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "[dry-run] would create:"
   printf '  %s\n' "${DIRS[@]}"
-  echo "  fyp/experiments/experiments.txt (file)"
 else
   mkdir -p "${DIRS[@]}"
-  touch "$REPO_ROOT/fyp/experiments/experiments.txt"
   echo "Created directory tree under: $REPO_ROOT"
 fi
 

@@ -1,0 +1,18 @@
+# Experiment entries for run_experiments.sh
+# Format: protocol  dataset  context
+# context: route_changes | source_seen | congestion
+# dataset shorthands ending in _n expand to the full sweep family
+
+ndp  incast_mono_n  route_changes
+ndp  incast_heavytail_burst_n  route_changes
+ndp  incast_heavytail_sigma_n  route_changes
+ndp  incast_heavytail  route_changes
+ndp  incast_heavytail  source_seen
+ndp  incast_heavytail_burst_1  route_changes
+tcp  incast_heavytail          route_changes
+ndp  incast_heavytail  congestion
+ndp  a2a_heavytail     congestion
+ndp  incast_heavytail_burst_8  route_changes
+ndp  a2a_heavytail             route_changes
+tcp  a2a_heavytail                  route_changes
+tcp  incast_heavytail_sigma_1p0     route_changes

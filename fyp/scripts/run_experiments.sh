@@ -41,29 +41,13 @@ cm_family() {
   echo "$name" | sed 's/_[0-9][0-9]*$//'
 }
 
-# Map (protocol:dataset:context) → findings subdir
-# Implemented as a function for bash 3.x compatibility (macOS ships bash 3.2, no declare -A)
-obs_subdir() {
-  local key="${1}:${2}:${3}"
-  case "$key" in
-    "ndp:incast_mono_n:route_changes")            echo "1_flow_size_sweep" ;;
-    "ndp:incast_heavytail_burst_n:route_changes") echo "2_burst_sweep" ;;
-    "ndp:incast_heavytail_sigma_n:route_changes") echo "3_skew_sweep" ;;
-    "ndp:incast_heavytail:route_changes")         echo "4_source_seen_vs_route_change" ;;
-    "ndp:incast_heavytail:source_seen")           echo "4_source_seen_vs_route_change" ;;
-    "ndp:incast_heavytail_burst_1:route_changes")       echo "5_failure_mode_baselines" ;;
-    "tcp:incast_heavytail:route_changes")               echo "5_failure_mode_baselines" ;;
-    "tcp:a2a_heavytail:route_changes")                  echo "5_failure_mode_baselines" ;;
-    "tcp:incast_heavytail_sigma_1p0:route_changes")     echo "5_failure_mode_baselines" ;;
-    "ndp:incast_heavytail:congestion")            echo "7_congestion_incast_vs_a2a" ;;
-    "ndp:a2a_heavytail:congestion")               echo "7_congestion_incast_vs_a2a" ;;
-    "ndp:incast_heavytail_burst_8:route_changes") echo "8_policy_ranking" ;;
-    "ndp:a2a_heavytail:route_changes")            echo "8_policy_ranking" ;;
-    *)                                             echo "unknown" ;;
-  esac
+# Derive findings subdir from (protocol, dataset, context).
+# Uses <protocol>_<dataset_base>_<context>, where dataset_base strips trailing _n.
+findings_subdir() {
+  local protocol="$1" dataset="$2" context="$3"
+  local ds_base="${dataset%_n}"
+  echo "${protocol}_${ds_base}_${context}"
 }
-
-# Observation 6 (concurrent-flow threshold) reuses 1_flow_size_sweep data — no separate entry needed.
 
 if [[ ! -f "$EXPERIMENTS_FILE" ]]; then
   echo "ERROR: experiments file not found: $EXPERIMENTS_FILE" >&2
@@ -172,10 +156,7 @@ if [[ -n "$PARALLEL" ]]; then
     echo "  [aggregate] entry ${entry_num}: collecting CSVs from 5 runs..."
 
     local findings_subdir
-    findings_subdir="$(obs_subdir "$protocol" "$dataset" "$context")"
-    if [[ "$findings_subdir" == "unknown" ]]; then
-      echo "  WARN: no findings mapping for $protocol/$dataset/$context — aggregating to findings/unknown/"
-    fi
+    findings_subdir="$(findings_subdir "$protocol" "$dataset" "$context")"
 
     local findings_dir="fyp/experiments/findings/${findings_subdir}"
     mkdir -p "$findings_dir"
@@ -466,11 +447,7 @@ for entry in "${ENTRIES[@]}"; do
   echo ""
   echo "  [aggregate] collecting CSVs from 5 runs..."
 
-  findings_subdir="$(obs_subdir "$protocol" "$dataset" "$context")"
-
-  if [[ "$findings_subdir" == "unknown" ]]; then
-    echo "  WARN: no findings mapping for $protocol/$dataset/$context — aggregating to findings/unknown/"
-  fi
+  findings_subdir="$(findings_subdir "$protocol" "$dataset" "$context")"
 
   findings_dir="fyp/experiments/findings/${findings_subdir}"
   mkdir -p "$findings_dir"
