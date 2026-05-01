@@ -117,7 +117,7 @@ Outputs:
 - `fyp/results/imc/uni1/flow_lifetime/plots/`
 - `fyp/results/imc/uni2/flow_lifetime/plots/`
 
-#### 1.4.5 Flow Temporal Locality
+#### 1.4.5 Flow Concurrency
 ```bash
 bash fyp/scripts/run_plot_flow_concurrency_imc_top8.sh
 ```
@@ -208,7 +208,7 @@ Outputs:
 
 - `fyp/results/mawi/flow_lifetime/plots/`
 
-#### 2.4.5 Flow Temporal Locality
+#### 2.4.5 Flow Concurrency
 ```bash
 bash fyp/scripts/run_plot_flow_concurrency_mawi_top8.sh
 ```
@@ -377,7 +377,7 @@ Outputs:
 
 - `fyp/results/synthetic/<protocol>/flow_lifetime/plots/`
 
-#### 3.4.5 Flow Temporal Locality
+#### 3.4.5 Flow Concurrency
 ```bash
 bash fyp/scripts/run_plot_flow_concurrency_synthetic.sh --protocol ndp
 bash fyp/scripts/run_plot_flow_concurrency_synthetic.sh --protocol hpcc

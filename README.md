@@ -9,3 +9,7 @@ There are some limited instructions in the [wiki](https://github.com/Broadcom/cs
 htsim is written in C++, and has no dependencies.  It should compile and run with g++ or clang on MacOS or Linux.  To compile htsim, cd into the sim directory and run make.
 
 To get started with running experiments, take a look in the experiments directory where there are some examples.  These examples generally require bash, python3 and gnuplot.
+
+## [NOTE] For UCL MEng Computer Science Final Year Project
+
+Please refer to PROJECT_PIPELINE.md in the root directory.
