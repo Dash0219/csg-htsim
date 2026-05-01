@@ -18,10 +18,10 @@ Options:
   -c, --cache NAME          Only plot this cache design (repeatable; default: all).
                             Valid names:
                               Infinite
-                              LRU, FIFO, LFU
+                              LRU
                               LRUTtl(0.1ms), LRUTtl(0.5ms), LRUTtl(2ms), LRUTtl(10ms)
                               OneHitWonderLRU, PendingAdmissionLRU
-                              AdaptiveAdmissionLRU, OnlineAdaptiveAdmissionLRU
+                              AdaptiveAdmissionLRU
                               TimeLimitedBloomLRU
                               TinyLFULRU, TinyCacheLRU
                               PITCollapsedLRU

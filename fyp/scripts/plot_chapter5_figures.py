@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate three chapter-5 figures:
-  obs1_skew_sweep.png    - suppression vs sigma (oracle/LRU/best, with 95CI)
-  obs2_burst_sweep.png   - suppression vs burst  (oracle/LRU/best, with 95CI)
+Generate chapter-5 figures:
+  obs1_skew_sweep.png     - suppression vs sigma (oracle/LRU/best, with 95CI)
+  obs2_burst_sweep.png    - suppression vs burst  (oracle/LRU/best, with 95CI)
+  obs3_cliff_sweep.png    - suppression vs capacity for incast_mono_64 (cliff effect)
   obs8_policy_ranking.png - mean eta vs capacity (all policies, rainbow gradient)
 """
 
@@ -17,7 +18,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
 FINDINGS = os.path.join(os.path.dirname(__file__), "../experiments/findings")
-OUT_DIR  = os.path.join(os.path.dirname(__file__), "../report/img")
+OUT_DIR  = os.path.join(os.path.dirname(__file__), "../report/FYP/img")
 
 C_ORACLE = "#ff0045"
 C_LRU    = "#ffd543"
@@ -170,7 +171,83 @@ def plot_burst():
 
 
 # ---------------------------------------------------------------------------
-# Plot 3: policy ranking — mean eta vs capacity
+# Plot 3: cliff sweep — suppression vs capacity for incast_mono_64
+# ---------------------------------------------------------------------------
+
+def plot_cliff():
+    cliff_csv = os.path.join(FINDINGS, "1_flow_size_sweep", "mean_ci95_ndp_incast_mono_64.csv")
+    df = load_csv(cliff_csv)
+
+    # All finite capacities in sorted order (exclude -1 = infinite oracle)
+    caps = sorted(df[df["capacity"] > 0]["capacity"].unique())
+
+    oracle_row = df[df["capacity"] == -1]
+    oracle_sup = oracle_row["suppression_rate"].values[0] if not oracle_row.empty else np.nan
+    oracle_ci  = oracle_row["suppression_rate_ci95"].values[0] if not oracle_row.empty else np.nan
+
+    # Policies to show: oracle (flat line), LRU, TinyLFULRU (best)
+    # Exclude archived policies (FIFO, LFU, OnlineAdaptiveAdmissionLRU)
+    EXCLUDE = {"FIFO", "LFU", "OnlineAdaptiveAdmissionLRU", "Infinite"}
+
+    lru_v, lru_c, best_v, best_c = [], [], [], []
+    for cap in caps:
+        sub = df[df["capacity"] == cap]
+        lru_row = sub[sub["cache"] == "LRU"]
+        lv = lru_row["suppression_rate"].values[0] if not lru_row.empty else np.nan
+        lc = lru_row["suppression_rate_ci95"].values[0] if not lru_row.empty else np.nan
+        lru_v.append(lv); lru_c.append(lc)
+
+        best_sub = sub[~sub["cache"].isin(EXCLUDE)]
+        if best_sub.empty:
+            best_v.append(np.nan); best_c.append(np.nan)
+        else:
+            idx = best_sub["suppression_rate"].idxmax()
+            row = best_sub.loc[idx]
+            best_v.append(row["suppression_rate"])
+            best_c.append(row["suppression_rate_ci95"])
+
+    xs = np.array(caps, dtype=float)
+    oracle_arr = np.array([oracle_sup] * len(caps)) * 100
+    oracle_ci_arr = np.array([oracle_ci] * len(caps)) * 100
+    lru_arr  = np.array(lru_v) * 100
+    lru_ci_arr = np.array(lru_c) * 100
+    best_arr = np.array(best_v) * 100
+    best_ci_arr = np.array(best_c) * 100
+
+    fig, ax = plt.subplots(figsize=(6, 3.8))
+    for arr, ci_arr, color, label in [
+        (oracle_arr, oracle_ci_arr, C_ORACLE, "Oracle"),
+        (lru_arr,    lru_ci_arr,    C_LRU,    "LRU"),
+        (best_arr,   best_ci_arr,   C_BEST,   "Best policy (TinyLFULRU)"),
+    ]:
+        ax.plot(xs, arr, color=color, linewidth=2, marker="o", markersize=5, label=label)
+        ax.fill_between(xs, arr - ci_arr, arr + ci_arr, color=color, alpha=0.2)
+
+    # Mark the cliff at cap=512 (where all 512 concurrent flows fit)
+    ax.axvline(512, color="#888888", linewidth=1, linestyle=":", zorder=1)
+    ax.text(512 * 1.05, 5, "cap = 512\n(= flow count)", fontsize=7.5, color="#555555", va="bottom")
+
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(xs)
+    ax.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
+    ax.set_xlabel("Cache capacity (entries, log₂ scale)", fontsize=11)
+    ax.set_ylabel("Suppression rate (%)", fontsize=11)
+    ax.set_ylim(0, 105)
+    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f%%"))
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+
+    out = os.path.join(OUT_DIR, "obs3_cliff_sweep.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out}")
+
+
+# ---------------------------------------------------------------------------
+# Plot 4: policy ranking — mean eta vs capacity
 # ---------------------------------------------------------------------------
 
 def plot_ranking():
@@ -178,7 +255,9 @@ def plot_ranking():
     files    = sorted(glob.glob(os.path.join(rank_dir, "*.csv")))
     dfs = [load_csv(f) for f in files]
 
-    all_policies = sorted({p for df in dfs for p in df["cache"].unique() if p != "Infinite"})
+    ARCHIVED = {"FIFO", "LFU", "OnlineAdaptiveAdmissionLRU"}
+    all_policies = sorted({p for df in dfs for p in df["cache"].unique()
+                           if p != "Infinite" and p not in ARCHIVED})
 
     # Compute mean eta at cap=256 across all datasets
     eta256 = {}
@@ -262,6 +341,8 @@ if __name__ == "__main__":
     plot_skew()
     print("Plotting obs2 burst sweep...")
     plot_burst()
-    print("Plotting obs3 policy ranking...")
+    print("Plotting obs3 cliff sweep...")
+    plot_cliff()
+    print("Plotting obs8 policy ranking...")
     plot_ranking()
     print("Done.")

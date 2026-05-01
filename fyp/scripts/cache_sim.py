@@ -1822,15 +1822,12 @@ def sweep(records, use_fast=False, capacity_curves=None, capacity_sample_every=1
     for size in SWEEP_SIZES:
         for factory in [
             lambda s=size: LRULastPath(s),
-            lambda s=size: FIFOLastPath(s),
-            lambda s=size: LFULastPath(s),
             lambda s=size: TinyLFULRU(s),
             lambda s=size: TinyCacheLRU(s),
             lambda s=size: AdmissionFilterLRU(s),
             lambda s=size: PendingAdmissionLRU(s),
             lambda s=size: PITCollapsedLRU(s),
             lambda s=size: AdaptiveAdmissionLRU(s),
-            lambda s=size: OnlineAdaptiveAdmissionLRU(s),
             lambda s=size: TimingBloomLRU(s),
             lambda s=size: FreshnessInvalidationLRU(s),
             lambda s=size: CacheINTFreshnessLRU(s),
@@ -1943,10 +1940,9 @@ if __name__ == '__main__':
     ap.add_argument('logfile', nargs='?', default='dash_logs/log2.txt')
     ap.add_argument('--sweep', action='store_true',
                     help='Sweep all cache sizes and policies')
-    ap.add_argument('--cache', choices=['lru', 'lfu', 'admission', 'pending_admission', 'pit', 'adaptive',
-                                          'online_adaptive',
+    ap.add_argument('--cache', choices=['lru', 'admission', 'pending_admission', 'pit', 'adaptive',
                                           'bloom',
-                                          'fifo', 'tiny_lfu', 'tiny_cache', 'lru_ttl', 'f_inv', 'cache_int', 'life_ttl', 'infinite_lp'],
+                                          'tiny_lfu', 'tiny_cache', 'lru_ttl', 'f_inv', 'cache_int', 'life_ttl', 'infinite_lp'],
                     default='lru', help='Cache policy for single run')
     ap.add_argument('--size', type=int, default=64,
                     help='Cache capacity (number of flow slots) for single run')
@@ -2019,7 +2015,6 @@ if __name__ == '__main__':
         life_max_ttl_ps = int(args.life_max_ttl_ms * 1_000_000_000)
         cache_map = {
             'lru':          lambda: LRULastPath(args.size),
-            'lfu':          lambda: LFULastPath(args.size),
             'admission':    lambda: AdmissionFilterLRU(
                 args.size,
                 pending_reset_every=args.bloom_epoch_records,
@@ -2029,9 +2024,7 @@ if __name__ == '__main__':
             'pending_admission': lambda: PendingAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
             'pit':          lambda: PITCollapsedLRU(args.size, download_delay_ps=pit_download_ps),
             'adaptive':     lambda: AdaptiveAdmissionLRU(args.size, pending_reset_every=args.pending_reset_every),
-            'online_adaptive': lambda: OnlineAdaptiveAdmissionLRU(args.size),
             'bloom':        lambda: TimingBloomLRU(args.size, args.bloom_bits, args.bloom_hashes, args.bloom_epoch_records),
-            'fifo':         lambda: FIFOLastPath(args.size),
             'tiny_lfu':     lambda: TinyLFULRU(args.size),
             'tiny_cache':   lambda: TinyCacheLRU(args.size),
             'lru_ttl':      lambda: LRULastPathTTL(args.size, ttl_ps),

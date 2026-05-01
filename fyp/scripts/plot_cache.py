@@ -135,8 +135,6 @@ def filter_rows(rows, include_policies=None, exclude_policies=None):
 NAME_ALIASES = {
     'InfiniteLastPath': 'Infinite',
     'LRULastPath': 'LRU',
-    'FIFOLastPath': 'FIFO',
-    'LFULastPath': 'LFU',
     'LRULastPathTTL': 'LRUTTL',
     'AdmissionFilterLRU': 'OneHitWonderLRU',
     'PITCollapsedLRU': 'PITCache',
@@ -146,15 +144,12 @@ NAME_ALIASES = {
 POLICY_GROUPS = {
     # Eviction-policy family.
     'LRU': 'Eviction-policy family',
-    'FIFO': 'Eviction-policy family',
-    'LFU': 'Eviction-policy family',
 
     # Admission and filtering family.
     'OneHitWonderLRU': 'Admission and filtering family',
     'PendingAdmissionLRU': 'Admission and filtering family',
     'PITCache': 'Admission and filtering family',
     'AdaptiveAdmissionLRU': 'Admission and filtering family',
-    'OnlineAdaptiveAdmissionLRU': 'Admission and filtering family',
     'TimeLimitedBloomLRU': 'Admission and filtering family',
     'TinyLFULRU': 'Admission and filtering family',
     'TinyCacheLRU': 'Admission and filtering family',
@@ -184,13 +179,10 @@ GROUP_COLORS = {
 POLICY_MARKERS = {
     'Infinite': 'o',
     'LRU': 's',
-    'FIFO': 'D',
-    'LFU': '^',
     'OneHitWonderLRU': 'P',
     'PendingAdmissionLRU': 'o',
     'PITCache': '|',
     'AdaptiveAdmissionLRU': 'X',
-    'OnlineAdaptiveAdmissionLRU': '8',
     'TimeLimitedBloomLRU': '*',
     'TinyLFULRU': '1',
     'TinyCacheLRU': '3',
@@ -489,7 +481,6 @@ if __name__ == '__main__':
     if args.hide_redundant_pairs:
         exclude_policies.extend([
             'AdaptiveAdmissionLRU',
-            'OnlineAdaptiveAdmissionLRU',
         ])
 
     rows = filter_rows(rows, include_policies=include_policies, exclude_policies=exclude_policies)
