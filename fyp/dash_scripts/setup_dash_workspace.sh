@@ -40,29 +40,29 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 DIRS=(
-  "fyp/dash_dataset/imc/univ1/univ1_trace_pcap"
-  "fyp/dash_dataset/imc/univ2/univ2_trace_pcap"
+  "fyp/dash_dataset/imc/uni1/uni1_trace_pcap"
+  "fyp/dash_dataset/imc/uni2/uni2_trace_pcap"
   "fyp/dash_dataset/mawi"
   "fyp/dash_dataset/synthetic"
   "fyp/dash_dataset/synthetic/ndp"
   "fyp/dash_dataset/synthetic/hpcc"
   "fyp/dash_dataset/synthetic/tcp"
 
-  "fyp/dash_results/imc/univ1/cache_sim/source_seen/plots"
-  "fyp/dash_results/imc/univ1/cache_sim/source_seen/capacity/plots"
-  "fyp/dash_results/imc/univ1/flow_size/plots"
-  "fyp/dash_results/imc/univ1/flow_lifetime/plots"
-  "fyp/dash_results/imc/univ1/ttl_window/plots"
-  "fyp/dash_results/imc/univ1/flow_stats"
-  "fyp/dash_results/imc/univ1/temporal_locality/plots"
+  "fyp/dash_results/imc/uni1/cache_sim/source_seen/plots"
+  "fyp/dash_results/imc/uni1/cache_sim/source_seen/capacity/plots"
+  "fyp/dash_results/imc/uni1/flow_size/plots"
+  "fyp/dash_results/imc/uni1/flow_lifetime/plots"
+  "fyp/dash_results/imc/uni1/ttl_window/plots"
+  "fyp/dash_results/imc/uni1/flow_stats"
+  "fyp/dash_results/imc/uni1/flow_concurrency/plots"
 
-  "fyp/dash_results/imc/univ2/cache_sim/source_seen/plots"
-  "fyp/dash_results/imc/univ2/cache_sim/source_seen/capacity/plots"
-  "fyp/dash_results/imc/univ2/flow_size/plots"
-  "fyp/dash_results/imc/univ2/flow_lifetime/plots"
-  "fyp/dash_results/imc/univ2/ttl_window/plots"
-  "fyp/dash_results/imc/univ2/flow_stats"
-  "fyp/dash_results/imc/univ2/temporal_locality/plots"
+  "fyp/dash_results/imc/uni2/cache_sim/source_seen/plots"
+  "fyp/dash_results/imc/uni2/cache_sim/source_seen/capacity/plots"
+  "fyp/dash_results/imc/uni2/flow_size/plots"
+  "fyp/dash_results/imc/uni2/flow_lifetime/plots"
+  "fyp/dash_results/imc/uni2/ttl_window/plots"
+  "fyp/dash_results/imc/uni2/flow_stats"
+  "fyp/dash_results/imc/uni2/flow_concurrency/plots"
 
   "fyp/dash_results/mawi/cache_sim/source_seen/plots"
   "fyp/dash_results/mawi/cache_sim/source_seen/capacity/plots"
@@ -70,7 +70,7 @@ DIRS=(
   "fyp/dash_results/mawi/flow_lifetime/plots"
   "fyp/dash_results/mawi/ttl_window/plots"
   "fyp/dash_results/mawi/flow_stats"
-  "fyp/dash_results/mawi/temporal_locality/plots"
+  "fyp/dash_results/mawi/flow_concurrency/plots"
 
   "fyp/dash_results/synthetic/ndp/connection_matrices"
   "fyp/dash_results/synthetic/ndp/raw_logs"
@@ -84,7 +84,7 @@ DIRS=(
   "fyp/dash_results/synthetic/ndp/flow_lifetime/plots"
   "fyp/dash_results/synthetic/ndp/ttl_window/plots"
   "fyp/dash_results/synthetic/ndp/flow_stats"
-  "fyp/dash_results/synthetic/ndp/temporal_locality/plots"
+  "fyp/dash_results/synthetic/ndp/flow_concurrency/plots"
 
   "fyp/dash_results/synthetic/hpcc/connection_matrices"
   "fyp/dash_results/synthetic/hpcc/raw_logs"
@@ -98,7 +98,7 @@ DIRS=(
   "fyp/dash_results/synthetic/hpcc/flow_lifetime/plots"
   "fyp/dash_results/synthetic/hpcc/ttl_window/plots"
   "fyp/dash_results/synthetic/hpcc/flow_stats"
-  "fyp/dash_results/synthetic/hpcc/temporal_locality/plots"
+  "fyp/dash_results/synthetic/hpcc/flow_concurrency/plots"
 
   "fyp/dash_results/synthetic/tcp/connection_matrices"
   "fyp/dash_results/synthetic/tcp/raw_logs"
@@ -112,7 +112,7 @@ DIRS=(
   "fyp/dash_results/synthetic/tcp/flow_lifetime/plots"
   "fyp/dash_results/synthetic/tcp/ttl_window/plots"
   "fyp/dash_results/synthetic/tcp/flow_stats"
-  "fyp/dash_results/synthetic/tcp/temporal_locality/plots"
+  "fyp/dash_results/synthetic/tcp/flow_concurrency/plots"
 
   "fyp/dash_experiments/logs"
   
@@ -120,7 +120,7 @@ DIRS=(
   "fyp/dash_experiments/run1/dataset/connection_matrices"
   "fyp/dash_experiments/run1/results/flow_stats"
   "fyp/dash_experiments/run1/results/flow_size/plots"
-  "fyp/dash_experiments/run1/results/temporal_locality/plots"
+  "fyp/dash_experiments/run1/results/flow_concurrency/plots"
   "fyp/dash_experiments/run1/results/cache_sim/route_changes"
   "fyp/dash_experiments/run1/results/cache_sim/source_seen"
   "fyp/dash_experiments/run1/results/cache_sim/congestion"
@@ -129,7 +129,7 @@ DIRS=(
   "fyp/dash_experiments/run2/dataset/connection_matrices"
   "fyp/dash_experiments/run2/results/flow_stats"
   "fyp/dash_experiments/run2/results/flow_size/plots"
-  "fyp/dash_experiments/run2/results/temporal_locality/plots"
+  "fyp/dash_experiments/run2/results/flow_concurrency/plots"
   "fyp/dash_experiments/run2/results/cache_sim/route_changes"
   "fyp/dash_experiments/run2/results/cache_sim/source_seen"
   "fyp/dash_experiments/run2/results/cache_sim/congestion"
@@ -138,7 +138,7 @@ DIRS=(
   "fyp/dash_experiments/run3/dataset/connection_matrices"
   "fyp/dash_experiments/run3/results/flow_stats"
   "fyp/dash_experiments/run3/results/flow_size/plots"
-  "fyp/dash_experiments/run3/results/temporal_locality/plots"
+  "fyp/dash_experiments/run3/results/flow_concurrency/plots"
   "fyp/dash_experiments/run3/results/cache_sim/route_changes"
   "fyp/dash_experiments/run3/results/cache_sim/source_seen"
   "fyp/dash_experiments/run3/results/cache_sim/congestion"
@@ -147,7 +147,7 @@ DIRS=(
   "fyp/dash_experiments/run4/dataset/connection_matrices"
   "fyp/dash_experiments/run4/results/flow_stats"
   "fyp/dash_experiments/run4/results/flow_size/plots"
-  "fyp/dash_experiments/run4/results/temporal_locality/plots"
+  "fyp/dash_experiments/run4/results/flow_concurrency/plots"
   "fyp/dash_experiments/run4/results/cache_sim/route_changes"
   "fyp/dash_experiments/run4/results/cache_sim/source_seen"
   "fyp/dash_experiments/run4/results/cache_sim/congestion"
@@ -156,7 +156,7 @@ DIRS=(
   "fyp/dash_experiments/run5/dataset/connection_matrices"
   "fyp/dash_experiments/run5/results/flow_stats"
   "fyp/dash_experiments/run5/results/flow_size/plots"
-  "fyp/dash_experiments/run5/results/temporal_locality/plots"
+  "fyp/dash_experiments/run5/results/flow_concurrency/plots"
   "fyp/dash_experiments/run5/results/cache_sim/route_changes"
   "fyp/dash_experiments/run5/results/cache_sim/source_seen"
   "fyp/dash_experiments/run5/results/cache_sim/congestion"
@@ -186,8 +186,8 @@ cat <<'EOF'
 Place real datasets here:
 
 1) IMC
-   - Univ1 pcaps/text input: fyp/dash_dataset/imc/univ1/univ1_trace_pcap/
-   - Univ2 pcaps/text input: fyp/dash_dataset/imc/univ2/univ2_trace_pcap/
+   - Uni1 pcaps/text input: fyp/dash_dataset/imc/uni1/uni1_trace_pcap/
+   - Uni2 pcaps/text input: fyp/dash_dataset/imc/uni2/uni2_trace_pcap/
 
 2) MAWI
    - Raw dump: fyp/dash_dataset/mawi/200803180000.dump
@@ -200,7 +200,7 @@ Place real datasets here:
    - Or for TCP:   bash fyp/dash_scripts/run_htsim_synthetic.sh --protocol tcp
 
 After placing data, run pipelines from the repository root:
-  python3 fyp/dash_scripts/run_imc_pipeline.py univ1
-  python3 fyp/dash_scripts/run_imc_pipeline.py univ2
+  python3 fyp/dash_scripts/run_imc_pipeline.py uni1
+  python3 fyp/dash_scripts/run_imc_pipeline.py uni2
   python3 fyp/dash_scripts/run_mawi_pipeline.py
 EOF

@@ -4,13 +4,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# Keep very large splits bounded; univ2_sink_244.157.0.0_16 can be an extreme outlier.
+# Keep very large splits bounded; uni2_sink_244.157.0.0_16 can be an extreme outlier.
 # 6.5M keeps runtime close to the largest "normal" split with some headroom.
 IMC_MAX_PACKETS_PER_SPLIT="${IMC_MAX_PACKETS_PER_SPLIT:-7000000}"
 CAPACITY_PLOT_CAPACITIES="${CAPACITY_PLOT_CAPACITIES:-}"
 CAPACITY_PLOT_MIN_CAPACITY="${CAPACITY_PLOT_MIN_CAPACITY:-512}"
 
-datasets=(univ1 univ2)
+datasets=(uni1 uni2)
 for ds in "${datasets[@]}"; do
   split_dir="fyp/dash_dataset/imc/${ds}/${ds}_sinks_top8_prefix16"
   out_dir="fyp/dash_results/imc/${ds}/cache_sim/source_seen"
@@ -53,4 +53,4 @@ for ds in "${datasets[@]}"; do
   echo "Wrote: $csv_out"
 done
 
-echo "Done. IMC source-seen CSVs under fyp/dash_results/imc/{univ1,univ2}/cache_sim/source_seen"
+echo "Done. IMC source-seen CSVs under fyp/dash_results/imc/{uni1,uni2}/cache_sim/source_seen"

@@ -10,9 +10,9 @@ Outputs:
 - redundancy_grid.png
 
 Usage examples:
-        python3 fyp/dash_scripts/plot_cache_grid.py --csv-glob 'fyp/dash_results/imc/univ1/cache_sim/source_seen/results_univ1_source_seen_top8_splits/*.csv' --total-csv fyp/dash_results/imc/univ1/cache_sim/source_seen/results_univ1_source_seen_top8.csv --out-dir fyp/dash_results/imc/univ1/cache_sim/source_seen/plots
+        python3 fyp/dash_scripts/plot_cache_grid.py --csv-glob 'fyp/dash_results/imc/uni1/cache_sim/source_seen/results_uni1_source_seen_top8_splits/*.csv' --total-csv fyp/dash_results/imc/uni1/cache_sim/source_seen/results_uni1_source_seen_top8.csv --out-dir fyp/dash_results/imc/uni1/cache_sim/source_seen/plots
 
-    python3 fyp/dash_scripts/plot_cache_grid.py --csvs a.csv b.csv ... i.csv --out-dir fyp/dash_results/imc/univ1/cache_sim/source_seen/plots
+    python3 fyp/dash_scripts/plot_cache_grid.py --csvs a.csv b.csv ... i.csv --out-dir fyp/dash_results/imc/uni1/cache_sim/source_seen/plots
 """
 
 from __future__ import annotations
@@ -175,7 +175,7 @@ def main() -> None:
     ap.add_argument("--csvs", nargs="*", default=[], help="Explicit list of CSV files")
     ap.add_argument("--csv-glob", default="", help="Glob for split CSV files")
     ap.add_argument("--total-csv", default="", help="Total aggregated CSV")
-    ap.add_argument("--out-dir", default="fyp/dash_results/imc/univ1/cache_sim/source_seen/plots", help="Output directory")
+    ap.add_argument("--out-dir", default="fyp/dash_results/imc/uni1/cache_sim/source_seen/plots", help="Output directory")
     ap.add_argument("--show", action="store_true", help="Show interactively")
     args = ap.parse_args()
 

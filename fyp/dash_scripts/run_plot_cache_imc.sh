@@ -7,7 +7,7 @@ Usage:
   bash fyp/dash_scripts/run_plot_cache_imc.sh [OUT_BASE] [options]
 
 Options:
-  -d, --dataset NAME        Limit plotting to one IMC dataset (univ1 or univ2)
+  -d, --dataset NAME        Limit plotting to one IMC dataset (uni1 or uni2)
   -n, --scale-to-infinite   Scale y-axis using observed infinite/data range
       --scale-factor X      Headroom multiplier with --scale-to-infinite (default: 1.25)
       --max-concurrency N   Override concurrency marker capacity (default: inferred from flow stats)
@@ -131,8 +131,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$DATASET" && "$DATASET" != "univ1" && "$DATASET" != "univ2" ]]; then
-  echo "ERROR: --dataset must be univ1 or univ2" >&2
+if [[ -n "$DATASET" && "$DATASET" != "uni1" && "$DATASET" != "uni2" ]]; then
+  echo "ERROR: --dataset must be uni1 or uni2" >&2
   exit 1
 fi
 
@@ -242,7 +242,7 @@ run_plot() {
 }
 
 count=0
-for ds in univ1 univ2; do
+for ds in uni1 uni2; do
   if [[ -n "$DATASET" && "$ds" != "$DATASET" ]]; then
     continue
   fi
@@ -306,4 +306,4 @@ for ds in univ1 univ2; do
   fi
 done
 
-echo "Done. Plotted $count IMC split CSV file(s) to $OUT_BASE/{univ1,univ2}/cache_sim/source_seen/plots"
+echo "Done. Plotted $count IMC split CSV file(s) to $OUT_BASE/{uni1,uni2}/cache_sim/source_seen/plots"

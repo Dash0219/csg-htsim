@@ -1,5 +1,5 @@
 """
-Run IMC ingest workflow for one dataset (e.g., univ1/univ2).
+Run IMC ingest workflow for one dataset (e.g., uni1/uni2).
 
 Workflow order (no cache-sim stage here):
 1) PCAP shards -> TXT shards
@@ -9,8 +9,8 @@ Workflow order (no cache-sim stage here):
 This workflow intentionally avoids creating or processing one huge merged file.
 
 Examples:
-    python3 fyp/dash_scripts/run_imc_pipeline.py univ1
-    python3 fyp/dash_scripts/run_imc_pipeline.py univ2 --ip-prefix-len 24
+    python3 fyp/dash_scripts/run_imc_pipeline.py uni1
+    python3 fyp/dash_scripts/run_imc_pipeline.py uni2 --ip-prefix-len 24
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import List
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dataset", help="Dataset name, e.g. univ1 or univ2.")
+    parser.add_argument("dataset", help="Dataset name, e.g. uni1 or uni2.")
     parser.add_argument(
         "--data-root",
         default="fyp/dash_dataset/imc",

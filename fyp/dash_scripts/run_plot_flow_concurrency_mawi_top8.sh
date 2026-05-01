@@ -4,12 +4,12 @@ set -euo pipefail
 print_usage() {
   cat <<'EOF'
 Usage:
-  bash fyp/dash_scripts/run_plot_temporal_locality_mawi_top8.sh [options]
+  bash fyp/dash_scripts/run_plot_flow_concurrency_mawi_top8.sh [options]
 
 Options:
   -s, --split-dir DIR        Input split directory (default: fyp/dash_dataset/mawi/mawi_sinks_top8_prefix16)
-  -o, --out-dir DIR          Output directory (default: fyp/dash_results/mawi/temporal_locality/plots)
-  -p, --prefix NAME          Output filename prefix (default: temporal_locality_mawi_top8)
+  -o, --out-dir DIR          Output directory (default: fyp/dash_results/mawi/flow_concurrency/plots)
+  -p, --prefix NAME          Output filename prefix (default: flow_concurrency_mawi_top8)
       --max-records N        Limit records parsed by plotter (default: 2000000, 0 means all)
       --max-plot-intervals N Cap intervals rendered per sink plot (default: 300000, 0 means all)
       --with-concurrency     Overlay concurrency on temporal plots
@@ -28,8 +28,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 SPLIT_DIR="${SPLIT_DIR:-fyp/dash_dataset/mawi/mawi_sinks_top8_prefix16}"
-OUT_DIR="${OUT_DIR:-fyp/dash_results/mawi/temporal_locality/plots}"
-PREFIX="${PREFIX:-temporal_locality_mawi_top8}"
+OUT_DIR="${OUT_DIR:-fyp/dash_results/mawi/flow_concurrency/plots}"
+PREFIX="${PREFIX:-flow_concurrency_mawi_top8}"
 
 MAX_RECORDS="${MAX_RECORDS:-2000000}"
 MAX_PLOT_INTERVALS="${MAX_PLOT_INTERVALS:-300000}"
@@ -108,7 +108,7 @@ fi
 count=0
 for sink_file in "$SPLIT_DIR"/*.txt; do
   [[ -f "$sink_file" ]] || continue
-  plot_cmd=(python3 fyp/dash_scripts/plot_temporal_locality.py "$sink_file" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --max-plot-intervals "$MAX_PLOT_INTERVALS")
+  plot_cmd=(python3 fyp/dash_scripts/plot_flow_concurrency.py "$sink_file" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --max-plot-intervals "$MAX_PLOT_INTERVALS")
   if [[ "$WITH_CONCURRENCY" == "1" ]]; then
     plot_cmd+=(--with-concurrency)
   fi

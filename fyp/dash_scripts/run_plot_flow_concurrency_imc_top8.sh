@@ -4,12 +4,12 @@ set -euo pipefail
 print_usage() {
   cat <<'EOF'
 Usage:
-  bash fyp/dash_scripts/run_plot_temporal_locality_imc_top8.sh [options]
+  bash fyp/dash_scripts/run_plot_flow_concurrency_imc_top8.sh [options]
 
 Options:
-  -d, --dataset NAME         Limit plotting to one IMC dataset (univ1 or univ2)
+  -d, --dataset NAME         Limit plotting to one IMC dataset (uni1 or uni2)
   -o, --out-base DIR         Output base directory (default: fyp/dash_results/imc)
-  -p, --prefix NAME          Output filename prefix (default: temporal_locality_imc_top8)
+  -p, --prefix NAME          Output filename prefix (default: flow_concurrency_imc_top8)
       --max-records N        Limit records parsed by plotter (default: 2000000, 0 means all)
       --max-plot-intervals N Cap intervals rendered per sink plot (default: 300000, 0 means all)
       --with-concurrency     Overlay concurrency on temporal plots
@@ -26,7 +26,7 @@ EOF
 
 DATASET="${DATASET:-}"
 OUT_BASE="${OUT_BASE:-fyp/dash_results/imc}"
-PREFIX="${PREFIX:-temporal_locality_imc_top8}"
+PREFIX="${PREFIX:-flow_concurrency_imc_top8}"
 MAX_RECORDS="${MAX_RECORDS:-2000000}"
 MAX_PLOT_INTERVALS="${MAX_PLOT_INTERVALS:-300000}"
 WITH_CONCURRENCY="${WITH_CONCURRENCY:-0}"
@@ -94,8 +94,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$DATASET" && "$DATASET" != "univ1" && "$DATASET" != "univ2" ]]; then
-  echo "ERROR: --dataset must be univ1 or univ2" >&2
+if [[ -n "$DATASET" && "$DATASET" != "uni1" && "$DATASET" != "uni2" ]]; then
+  echo "ERROR: --dataset must be uni1 or uni2" >&2
   exit 1
 fi
 
@@ -105,11 +105,11 @@ cd "$REPO_ROOT"
 mkdir -p "$OUT_BASE"
 
 count=0
-for ds in univ1 univ2; do
+for ds in uni1 uni2; do
   if [[ -n "$DATASET" && "$ds" != "$DATASET" ]]; then
     continue
   fi
-  out_dir="$OUT_BASE/$ds/temporal_locality/plots"
+  out_dir="$OUT_BASE/$ds/flow_concurrency/plots"
   mkdir -p "$out_dir"
   split_dir="fyp/dash_dataset/imc/${ds}/${ds}_sinks_top8_prefix16"
   if [[ ! -d "$split_dir" ]]; then
@@ -119,7 +119,7 @@ for ds in univ1 univ2; do
 
   for sink_file in "$split_dir"/*.txt "$split_dir"/*.log; do
     [[ -f "$sink_file" ]] || continue
-    plot_cmd=(python3 fyp/dash_scripts/plot_temporal_locality.py "$sink_file" --out-dir "$out_dir" --prefix "${PREFIX}_${ds}" --max-records "$MAX_RECORDS" --max-plot-intervals "$MAX_PLOT_INTERVALS")
+    plot_cmd=(python3 fyp/dash_scripts/plot_flow_concurrency.py "$sink_file" --out-dir "$out_dir" --prefix "${PREFIX}_${ds}" --max-records "$MAX_RECORDS" --max-plot-intervals "$MAX_PLOT_INTERVALS")
     if [[ "$WITH_CONCURRENCY" == "1" ]]; then
       plot_cmd+=(--with-concurrency)
     fi
@@ -132,4 +132,4 @@ for ds in univ1 univ2; do
   done
 done
 
-echo "Done. Plotted temporal locality for $count IMC top-8 split files into $OUT_BASE/{univ1,univ2}/temporal_locality/plots"
+echo "Done. Plotted temporal locality for $count IMC top-8 split files into $OUT_BASE/{uni1,uni2}/flow_concurrency/plots"

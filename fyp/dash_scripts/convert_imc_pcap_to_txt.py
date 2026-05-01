@@ -6,17 +6,17 @@ and exports one packet per line with common L2/L3/L4 fields.
 
 Examples:
   # Convert one shard into a .txt next to the input file
-        python3 fyp/dash_scripts/convert_imc_pcap_to_txt.py fyp/dash_dataset/imc/univ2/univ2_trace_pcap/univ2_pt1
+        python3 fyp/dash_scripts/convert_imc_pcap_to_txt.py fyp/dash_dataset/imc/uni2/uni2_trace_pcap/uni2_pt1
 
     # Convert all shards in a dataset folder into an output folder
   python3 fyp/dash_scripts/convert_imc_pcap_to_txt.py \
-                        fyp/dash_dataset/imc/univ2/univ2_trace_pcap --output-dir fyp/dash_dataset/imc/univ2/univ2_trace_txt
+                        fyp/dash_dataset/imc/uni2/uni2_trace_pcap --output-dir fyp/dash_dataset/imc/uni2/uni2_trace_txt
 
   # Convert directory and also write one merged TSV file
   python3 fyp/dash_scripts/convert_imc_pcap_to_txt.py \
-                        fyp/dash_dataset/imc/univ2/univ2_trace_pcap \
-                        --output-dir fyp/dash_dataset/imc/univ2/univ2_trace_txt \
-                        --merged-output fyp/dash_dataset/imc/univ2/univ2_trace_all.txt
+                        fyp/dash_dataset/imc/uni2/uni2_trace_pcap \
+                        --output-dir fyp/dash_dataset/imc/uni2/uni2_trace_txt \
+                        --merged-output fyp/dash_dataset/imc/uni2/uni2_trace_all.txt
 """
 
 from __future__ import annotations

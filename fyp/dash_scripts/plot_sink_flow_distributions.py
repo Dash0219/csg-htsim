@@ -3,7 +3,7 @@ Plot per-sink flow-size distributions from split IMC/MAWI sink datasets.
 
 Input files are expected to be split table files from split_imc_by_sink.py,
 for example:
-    fyp/dash_dataset/imc/univ2/univ2_sinks_top8_prefix16/univ2_sink_41.177.0.0_16.txt
+    fyp/dash_dataset/imc/uni2/uni2_sinks_top8_prefix16/uni2_sink_41.177.0.0_16.txt
 
 Output:
     One 1x2 PNG per sink (bar chart + CCDF) plus a combined grid PNG.
@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--split-dir",
-        default="fyp/dash_dataset/imc/univ2/univ2_sinks_top8_prefix16",
+        default="fyp/dash_dataset/imc/uni2/uni2_sinks_top8_prefix16",
         help="Directory containing sink split files (default: %(default)s).",
     )
     parser.add_argument(
@@ -86,11 +86,11 @@ def parse_args() -> argparse.Namespace:
 
 def infer_imc_dataset(split_dir: Path) -> str:
     parts = [p.lower() for p in split_dir.parts]
-    if "univ1" in parts:
-        return "univ1"
-    if "univ2" in parts:
-        return "univ2"
-    return "univ2"
+    if "uni1" in parts:
+        return "uni1"
+    if "uni2" in parts:
+        return "uni2"
+    return "uni2"
 
 
 def sniff_delimiter(path: Path) -> str:

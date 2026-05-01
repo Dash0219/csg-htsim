@@ -2,14 +2,14 @@
 """
 Temporal-locality plotting helper for IMC cache-input INT logs.
 
-This is a convenience wrapper around plot_temporal_locality.py with IMC defaults.
+This is a convenience wrapper around plot_flow_concurrency.py with IMC defaults.
 """
 
 import argparse
 import os
 
 try:
-    from fyp.dash_scripts.plot_temporal_locality import (
+    from fyp.dash_scripts.plot_flow_concurrency import (
         assign_compact_lanes,
         build_concurrency_step,
         build_intervals,
@@ -17,7 +17,7 @@ try:
         sanitize_name,
     )
 except ModuleNotFoundError:
-    from plot_temporal_locality import (  # type: ignore
+    from plot_flow_concurrency import (  # type: ignore
         assign_compact_lanes,
         build_concurrency_step,
         build_intervals,
@@ -36,8 +36,8 @@ def parse_args():
         action="store_true",
         help="Include built-in IMC defaults (also used when no logfile is provided)",
     )
-    ap.add_argument("--out-dir", default="fyp/dash_results/imc/univ2/temporal_locality/plots", help="Output directory for PNGs")
-    ap.add_argument("--prefix", default="temporal_locality_imc", help="Output filename prefix")
+    ap.add_argument("--out-dir", default="fyp/dash_results/imc/uni2/flow_concurrency/plots", help="Output directory for PNGs")
+    ap.add_argument("--prefix", default="flow_concurrency_imc", help="Output filename prefix")
     ap.add_argument("--max-records", type=int, default=0, help="Only use first N records (0 means all)")
     ap.add_argument(
         "--split-gap-us",
@@ -66,7 +66,7 @@ def parse_args():
 
 def default_imc_logs():
     files = []
-    for ds in ("univ1", "univ2"):
+    for ds in ("uni1", "uni2"):
         split_dir = os.path.join("dash_dataset", "imc", ds, f"{ds}_sinks_top8_prefix16")
         if not os.path.isdir(split_dir):
             continue

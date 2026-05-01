@@ -20,8 +20,8 @@ bash fyp/dash_scripts/setup_dash_workspace.sh
 
 Then place real datasets in:
 
-- IMC Univ1 traces: `fyp/dash_dataset/imc/univ1/univ1_trace_pcap/`
-- IMC Univ2 traces: `fyp/dash_dataset/imc/univ2/univ2_trace_pcap/`
+- IMC Uni1 traces: `fyp/dash_dataset/imc/uni1/uni1_trace_pcap/`
+- IMC Uni2 traces: `fyp/dash_dataset/imc/uni2/uni2_trace_pcap/`
 - MAWI raw dump: `fyp/dash_dataset/mawi/200803180000.dump`
 - Optional MAWI text dump: `fyp/dash_dataset/mawi/200803180000.dump.txt`
 
@@ -31,20 +31,20 @@ Synthetic logs are generated locally (see Section 3).
 
 ### 1.1 Expected Input Layout
 
-- `fyp/dash_dataset/imc/univ1/univ1_trace_pcap/`
-- `fyp/dash_dataset/imc/univ2/univ2_trace_pcap/`
+- `fyp/dash_dataset/imc/uni1/uni1_trace_pcap/`
+- `fyp/dash_dataset/imc/uni2/uni2_trace_pcap/`
 
 ### 1.2 Build Top-8 /16 Sink Splits
 
 ```bash
-python3 fyp/dash_scripts/run_imc_pipeline.py univ1
-python3 fyp/dash_scripts/run_imc_pipeline.py univ2
+python3 fyp/dash_scripts/run_imc_pipeline.py uni1
+python3 fyp/dash_scripts/run_imc_pipeline.py uni2
 ```
 
 This creates:
 
-- `fyp/dash_dataset/imc/univ1/univ1_sinks_top8_prefix16/*.txt`
-- `fyp/dash_dataset/imc/univ2/univ2_sinks_top8_prefix16/*.txt`
+- `fyp/dash_dataset/imc/uni1/uni1_sinks_top8_prefix16/*.txt`
+- `fyp/dash_dataset/imc/uni2/uni2_sinks_top8_prefix16/*.txt`
 
 Sink files are rewritten to HTSIM INT-style log format (not tabular packet rows).
 The intermediate conversion directory `<dataset>_trace_txt` is removed automatically
@@ -52,7 +52,7 @@ after pipeline completion unless `--keep-txt-dir` is passed.
 
 Naming is dataset-prefixed, for example:
 
-- `univ1_sink_41.177.0.0_16.txt`
+- `uni1_sink_41.177.0.0_16.txt`
 
 ### 1.3 Cache Simulation
 
@@ -64,12 +64,12 @@ IMC_MAX_PACKETS_PER_SPLIT=7000000 bash fyp/dash_scripts/run_cache_sim_imc.sh
 
 Outputs:
 
-- `fyp/dash_results/imc/univ1/cache_sim/source_seen/results_univ1_source_seen_top8.csv`
-- `fyp/dash_results/imc/univ2/cache_sim/source_seen/results_univ2_source_seen_top8.csv`
-- `fyp/dash_results/imc/univ1/cache_sim/source_seen/capacity/results_univ1_source_seen_top8_capacity.csv`
-- `fyp/dash_results/imc/univ2/cache_sim/source_seen/capacity/results_univ2_source_seen_top8_capacity.csv`
-- `fyp/dash_results/imc/univ1/cache_sim/source_seen/capacity/plots/univ1/`
-- `fyp/dash_results/imc/univ2/cache_sim/source_seen/capacity/plots/univ2/`
+- `fyp/dash_results/imc/uni1/cache_sim/source_seen/results_uni1_source_seen_top8.csv`
+- `fyp/dash_results/imc/uni2/cache_sim/source_seen/results_uni2_source_seen_top8.csv`
+- `fyp/dash_results/imc/uni1/cache_sim/source_seen/capacity/results_uni1_source_seen_top8_capacity.csv`
+- `fyp/dash_results/imc/uni2/cache_sim/source_seen/capacity/results_uni2_source_seen_top8_capacity.csv`
+- `fyp/dash_results/imc/uni1/cache_sim/source_seen/capacity/plots/uni1/`
+- `fyp/dash_results/imc/uni2/cache_sim/source_seen/capacity/plots/uni2/`
 - Per-sink split CSVs in corresponding `..._splits/` directories
 
 ### 1.4 Plots and Stats
@@ -84,8 +84,8 @@ bash fyp/dash_scripts/run_plot_cache_imc.sh --switch-budget 512 --hide-redundant
 
 Outputs:
 
-- `fyp/dash_results/imc/univ1/cache_sim/source_seen/plots/`
-- `fyp/dash_results/imc/univ2/cache_sim/source_seen/plots/`
+- `fyp/dash_results/imc/uni1/cache_sim/source_seen/plots/`
+- `fyp/dash_results/imc/uni2/cache_sim/source_seen/plots/`
 
 #### 1.4.2 Flow Stats Summary
 ```bash
@@ -94,8 +94,8 @@ bash fyp/dash_scripts/run_flow_stats_imc.sh
 
 Outputs:
 
-- `fyp/dash_results/imc/univ1/flow_stats/`
-- `fyp/dash_results/imc/univ2/flow_stats/`
+- `fyp/dash_results/imc/uni1/flow_stats/`
+- `fyp/dash_results/imc/uni2/flow_stats/`
 
 #### 1.4.3 Flow Size Distribution
 ```bash
@@ -104,8 +104,8 @@ bash fyp/dash_scripts/run_plot_flow_distribution_imc.sh
 
 Outputs:
 
-- `fyp/dash_results/imc/univ1/flow_size/plots/`
-- `fyp/dash_results/imc/univ2/flow_size/plots/`
+- `fyp/dash_results/imc/uni1/flow_size/plots/`
+- `fyp/dash_results/imc/uni2/flow_size/plots/`
 
 #### 1.4.4 Flow Lifetime Distribution
 ```bash
@@ -114,18 +114,18 @@ bash fyp/dash_scripts/run_plot_flow_lifetime_imc_top8.sh
 
 Outputs:
 
-- `fyp/dash_results/imc/univ1/flow_lifetime/plots/`
-- `fyp/dash_results/imc/univ2/flow_lifetime/plots/`
+- `fyp/dash_results/imc/uni1/flow_lifetime/plots/`
+- `fyp/dash_results/imc/uni2/flow_lifetime/plots/`
 
 #### 1.4.5 Flow Temporal Locality
 ```bash
-bash fyp/dash_scripts/run_plot_temporal_locality_imc_top8.sh
+bash fyp/dash_scripts/run_plot_flow_concurrency_imc_top8.sh
 ```
 
 Outputs:
 
-- `fyp/dash_results/imc/univ1/temporal_locality/plots/`
-- `fyp/dash_results/imc/univ2/temporal_locality/plots/`
+- `fyp/dash_results/imc/uni1/flow_concurrency/plots/`
+- `fyp/dash_results/imc/uni2/flow_concurrency/plots/`
 
 #### 1.4.6 Inter-Record TTL Window Distribution
 ```bash
@@ -134,8 +134,8 @@ bash fyp/dash_scripts/run_plot_ttl_window_imc_top8.sh
 
 Outputs:
 
-- `fyp/dash_results/imc/univ1/ttl_window/plots/`
-- `fyp/dash_results/imc/univ2/ttl_window/plots/`
+- `fyp/dash_results/imc/uni1/ttl_window/plots/`
+- `fyp/dash_results/imc/uni2/ttl_window/plots/`
 
 ## 2. MAWI Pipeline
 
@@ -210,12 +210,12 @@ Outputs:
 
 #### 2.4.5 Flow Temporal Locality
 ```bash
-bash fyp/dash_scripts/run_plot_temporal_locality_mawi_top8.sh
+bash fyp/dash_scripts/run_plot_flow_concurrency_mawi_top8.sh
 ```
 
 Outputs:
 
-- `fyp/dash_results/mawi/temporal_locality/plots/`
+- `fyp/dash_results/mawi/flow_concurrency/plots/`
 
 #### 2.4.6 Inter-Record TTL Window Distribution
 ```bash
@@ -379,13 +379,13 @@ Outputs:
 
 #### 3.4.5 Flow Temporal Locality
 ```bash
-bash fyp/dash_scripts/run_plot_temporal_locality_synthetic.sh --protocol ndp
-bash fyp/dash_scripts/run_plot_temporal_locality_synthetic.sh --protocol hpcc
+bash fyp/dash_scripts/run_plot_flow_concurrency_synthetic.sh --protocol ndp
+bash fyp/dash_scripts/run_plot_flow_concurrency_synthetic.sh --protocol hpcc
 ```
 
 Outputs:
 
-- `fyp/dash_results/synthetic/<protocol>/temporal_locality/plots/`
+- `fyp/dash_results/synthetic/<protocol>/flow_concurrency/plots/`
 
 #### 3.4.6 Inter-Record TTL Window Distribution
 ```bash

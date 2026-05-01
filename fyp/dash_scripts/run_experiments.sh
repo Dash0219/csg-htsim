@@ -319,9 +319,9 @@ if [[ -n "$PARALLEL" ]]; then
           esac
 
           echo "  [run${run_idx}] [temporal locality plot] running..."
-          OUT_DIR="${run_dir}/results/temporal_locality/plots/${protocol}" \
+          OUT_DIR="${run_dir}/results/flow_concurrency/plots/${protocol}" \
           LOG_ROOT="$log_root" \
-            bash "$SCRIPTS/run_plot_temporal_locality_synthetic.sh" -p "$protocol" -d "$dataset"
+            bash "$SCRIPTS/run_plot_flow_concurrency_synthetic.sh" -p "$protocol" -d "$dataset"
 
           echo "  [run${run_idx}] [flow distribution plot] running..."
           OUT_DIR="${run_dir}/results/flow_size/plots/${protocol}" \
@@ -436,9 +436,9 @@ for entry in "${ENTRIES[@]}"; do
 
     # 4. temporal locality plot
     echo "  [run${run_idx}] [temporal locality plot] running..."
-    OUT_DIR="${run_dir}/results/temporal_locality/plots/${protocol}" \
+    OUT_DIR="${run_dir}/results/flow_concurrency/plots/${protocol}" \
     LOG_ROOT="$log_root" \
-      bash "$SCRIPTS/run_plot_temporal_locality_synthetic.sh" -p "$protocol" -d "$dataset"
+      bash "$SCRIPTS/run_plot_flow_concurrency_synthetic.sh" -p "$protocol" -d "$dataset"
 
     # 5. flow distribution plot
     echo "  [run${run_idx}] [flow distribution plot] running..."

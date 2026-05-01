@@ -37,7 +37,7 @@ def _save(fig, out_dir, name):
 
 
 def plot_exp1(exp_root, out_dir, flow_stats_csv=None):
-    path = os.path.join(exp_root, "temporal_locality_axis_summary.csv")
+    path = os.path.join(exp_root, "flow_concurrency_axis_summary.csv")
     if not os.path.exists(path):
         return
     rows = _read_csv(path)

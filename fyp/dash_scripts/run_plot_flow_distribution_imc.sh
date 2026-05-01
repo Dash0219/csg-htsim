@@ -7,7 +7,7 @@ Usage:
   bash fyp/dash_scripts/run_plot_flow_distribution_imc.sh [options]
 
 Options:
-  -d, --dataset NAME         Limit plotting to one IMC dataset (univ1 or univ2)
+  -d, --dataset NAME         Limit plotting to one IMC dataset (uni1 or uni2)
   -o, --out-base DIR         Output base directory (default: fyp/dash_results/imc)
   --prefix NAME          Output filename prefix base (default: sink_flow_size)
       --cols N               Subplot grid columns (default: 4)
@@ -68,8 +68,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$DATASET" && "$DATASET" != "univ1" && "$DATASET" != "univ2" ]]; then
-  echo "ERROR: --dataset must be univ1 or univ2" >&2
+if [[ -n "$DATASET" && "$DATASET" != "uni1" && "$DATASET" != "uni2" ]]; then
+  echo "ERROR: --dataset must be uni1 or uni2" >&2
   exit 1
 fi
 
@@ -77,7 +77,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 count=0
-for ds in univ1 univ2; do
+for ds in uni1 uni2; do
   if [[ -n "$DATASET" && "$ds" != "$DATASET" ]]; then
     continue
   fi
@@ -103,4 +103,4 @@ for ds in univ1 univ2; do
   count=$((count + 1))
 done
 
-echo "Done. Plotted flow sizes for $count IMC dataset(s) into $OUT_BASE/{univ1,univ2}/flow_size/plots"
+echo "Done. Plotted flow sizes for $count IMC dataset(s) into $OUT_BASE/{uni1,uni2}/flow_size/plots"

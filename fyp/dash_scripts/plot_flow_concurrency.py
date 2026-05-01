@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compact temporal-locality plot for INT traces.
+Compact flow-concurrency plot for INT traces.
 
 Produces a timeline where:
 - X axis is time,
@@ -241,7 +241,7 @@ def parse_args():
     )
     ap.add_argument(
         "--out-dir",
-        default="fyp/dash_results/synthetic/temporal_locality/plots",
+        default="fyp/dash_results/synthetic/flow_concurrency/plots",
         help="Output directory for PNGs",
     )
     ap.add_argument(
@@ -249,7 +249,7 @@ def parse_args():
         default="fyp/dash_dataset/synthetic",
         help="Directory containing synthetic log_<dataset>.txt files",
     )
-    ap.add_argument("--prefix", default="temporal_locality", help="Output filename prefix")
+    ap.add_argument("--prefix", default="flow_concurrency", help="Output filename prefix")
     ap.add_argument("--max-records", type=int, default=0, help="Only use first N records (0 means all)")
     ap.add_argument(
         "--split-gap-us",

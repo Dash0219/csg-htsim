@@ -164,8 +164,8 @@ fi
 
 OUT_SYN_ROUTE="$OUT_BASE/synthetic/cache_sim/route_changes/plots"
 OUT_SYN_SOURCE="$OUT_BASE/synthetic/cache_sim/source_seen/plots"
-OUT_UNIV1="$OUT_BASE/imc/univ1/cache_sim/source_seen/plots"
-OUT_UNIV2="$OUT_BASE/imc/univ2/cache_sim/source_seen/plots"
+OUT_UNIV1="$OUT_BASE/imc/uni1/cache_sim/source_seen/plots"
+OUT_UNIV2="$OUT_BASE/imc/uni2/cache_sim/source_seen/plots"
 mkdir -p "$OUT_SYN_ROUTE" "$OUT_SYN_SOURCE" "$OUT_UNIV1" "$OUT_UNIV2"
 
 count=0
@@ -223,18 +223,18 @@ for csv in fyp/dash_results/synthetic/cache_sim/source_seen/results_synthetic_so
   count=$((count + 1))
 done
 
-for csv in fyp/dash_results/imc/univ1/cache_sim/source_seen/results_univ1_source_seen_top8_splits/*.csv; do
+for csv in fyp/dash_results/imc/uni1/cache_sim/source_seen/results_uni1_source_seen_top8_splits/*.csv; do
   [[ -f "$csv" ]] || continue
   stem="$(basename "$csv" .csv)"
-  echo "== plotting univ1/$stem =="
+  echo "== plotting uni1/$stem =="
   python3 fyp/dash_scripts/plot_cache.py "$csv" --out "$OUT_UNIV1" --prefix "$stem" "${EXTRA_ARGS[@]}"
   count=$((count + 1))
 done
 
-for csv in fyp/dash_results/imc/univ2/cache_sim/source_seen/results_univ2_source_seen_top8_splits/*.csv; do
+for csv in fyp/dash_results/imc/uni2/cache_sim/source_seen/results_uni2_source_seen_top8_splits/*.csv; do
   [[ -f "$csv" ]] || continue
   stem="$(basename "$csv" .csv)"
-  echo "== plotting univ2/$stem =="
+  echo "== plotting uni2/$stem =="
   python3 fyp/dash_scripts/plot_cache.py "$csv" --out "$OUT_UNIV2" --prefix "$stem" "${EXTRA_ARGS[@]}"
   count=$((count + 1))
 done

@@ -4,7 +4,7 @@ set -euo pipefail
 print_usage() {
   cat <<'EOF'
 Usage:
-  bash fyp/dash_scripts/run_plot_temporal_locality_synthetic.sh [options]
+  bash fyp/dash_scripts/run_plot_flow_concurrency_synthetic.sh [options]
 
 Options:
   -d, --dataset NAME        Only plot one synthetic dataset, or a family shorthand:
@@ -14,8 +14,8 @@ Options:
                               incast_heavytail_sigma_n / a2a_heavytail_sigma_n
                               incast_heavytail_temp_n / a2a_heavytail_temp_n
   -p, --protocol NAME       Transport protocol: ndp or hpcc or tcp (default: all three)
-  -o, --out-dir DIR         Output directory (default: fyp/dash_results/synthetic/<protocol>/temporal_locality/plots)
-      --prefix NAME         Output filename prefix (default: temporal_locality)
+  -o, --out-dir DIR         Output directory (default: fyp/dash_results/synthetic/<protocol>/flow_concurrency/plots)
+      --prefix NAME         Output filename prefix (default: flow_concurrency)
       --max-records N       Limit parsed records (default: 0 means all)
       --max-plot-intervals N Cap rendered intervals (default: 300000)
       --with-concurrency    Overlay concurrency on temporal plots
@@ -29,7 +29,7 @@ LOW_TEMP_LOCALITY="${LOW_TEMP_LOCALITY:-0}"
 LOW_TEMP_SUFFIX="${LOW_TEMP_SUFFIX:-low_temp_locality}"
 PROTOCOLS="${PROTOCOL:-ndp hpcc tcp}"
 OUT_DIR="${OUT_DIR:-}"
-PREFIX="${PREFIX:-temporal_locality}"
+PREFIX="${PREFIX:-flow_concurrency}"
 MAX_RECORDS="${MAX_RECORDS:-0}"
 MAX_PLOT_INTERVALS="${MAX_PLOT_INTERVALS:-300000}"
 WITH_CONCURRENCY="${WITH_CONCURRENCY:-0}"
@@ -128,7 +128,7 @@ DATASET_ORIG="$DATASET"
 for PROTOCOL in $PROTOCOLS; do
   echo "=== Protocol: $PROTOCOL ==="
 
-  OUT_DIR="${OUT_DIR_BASE:-fyp/dash_results/synthetic/${PROTOCOL}/temporal_locality/plots}"
+  OUT_DIR="${OUT_DIR_BASE:-fyp/dash_results/synthetic/${PROTOCOL}/flow_concurrency/plots}"
   LOG_ROOT="${LOG_ROOT_BASE:-fyp/dash_dataset/synthetic/${PROTOCOL}}"
   mkdir -p "$OUT_DIR"
 
@@ -152,7 +152,7 @@ for PROTOCOL in $PROTOCOLS; do
     DATASET=""
   fi
 
-  cmd=(python3 fyp/dash_scripts/plot_temporal_locality.py --logs-dir "$LOG_ROOT" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --max-plot-intervals "$MAX_PLOT_INTERVALS")
+  cmd=(python3 fyp/dash_scripts/plot_flow_concurrency.py --logs-dir "$LOG_ROOT" --out-dir "$OUT_DIR" --prefix "$PREFIX" --max-records "$MAX_RECORDS" --max-plot-intervals "$MAX_PLOT_INTERVALS")
   if [[ -n "$DATASET" ]]; then
     cmd+=(--dataset "$DATASET")
   fi
